@@ -710,8 +710,23 @@
     // through, not just the final resting zoom
     const zLow = Math.max(1, Math.floor(Math.min(map.getZoom(), target.zoom)));
     const zHigh = Math.min(17, Math.ceil(Math.max(map.getZoom(), target.zoom))); // cap at maxNativeZoom
+    // for a route that spans a big chunk of the globe (e.g. Kerala to the
+    // US), the bounding box at the lower zoom levels can cover hundreds of
+    // thousands of tiles. Two problems with that: spreading a huge
+    // per-zoom tile array into `tiles.push(...)` blows the call stack
+    // (this used to crash mid-search — a suggestion click on a far-away
+    // result would throw, get swallowed by the search's catch block, and
+    // wipe the results list back to "No results"), and actually fetching
+    // that many tiles would hammer the tile server for warmup the flyTo
+    // animation will only fleetingly need. So: skip warming a zoom level
+    // once its tile count is unreasonable, and never spread into push.
+    const MAX_TILES_PER_ZOOM = 400;
     const tiles = [];
-    for (let z = zLow; z <= zHigh; z++) tiles.push(...tilesForBounds(bounds, z));
+    for (let z = zLow; z <= zHigh; z++) {
+      const zTiles = tilesForBounds(bounds, z);
+      if (zTiles.length > MAX_TILES_PER_ZOOM) continue;
+      for (const t of zTiles) tiles.push(t);
+    }
     fetchTilesConcurrent(tiles);
   }
 
