@@ -10,8 +10,8 @@
 
 
 ### Team Members
-- Team Lead: [Shreevardhan T V] - [SCTCE Trivandrum]
-- Member 2: [Bhama SS] - [SCTCE Trivandrum]
+- Team Lead: [Shreevardhan T V](https://github.com/trimpta) - [SCTCE Trivandrum]
+- Member 2: [Bhama SS](https://github.com/bhama2006/) - [SCTCE Trivandrum]
 
 ### Project Description
 [2-3 lines about what your project does]
