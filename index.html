@@ -15,10 +15,10 @@
   #map { height: 100%; width: 100%; background: #6b7264; }
 
   /* panes that fade out while the map is panning/zooming, back in on release */
-  #top-bar, #bottom-card {
+  #top-bar, #bottom-card, #locate-btn, .leaflet-control-zoom {
     transition: opacity 0.3s ease;
   }
-  #top-bar.dimmed, #bottom-card.dimmed {
+  #top-bar.dimmed, #bottom-card.dimmed, #locate-btn.dimmed, .leaflet-control-zoom.dimmed {
     opacity: 0;
     pointer-events: none;
   }
@@ -144,7 +144,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: bottom 0.3s ease;
+    transition: bottom 0.3s ease, opacity 0.3s ease;
   }
   .leaflet-bottom.leaflet-left {
     bottom: var(--controls-bottom) !important;
@@ -474,13 +474,14 @@
   // back in once it settles ----------
   const topBarEl = document.getElementById('top-bar');
   const bottomCardEl = document.getElementById('bottom-card');
+  const locateBtnEl = document.getElementById('locate-btn');
+  const zoomCtrlEl = document.querySelector('.leaflet-control-zoom');
+  const fadingEls = [topBarEl, bottomCardEl, locateBtnEl, zoomCtrlEl];
   map.on('movestart', () => {
-    topBarEl.classList.add('dimmed');
-    bottomCardEl.classList.add('dimmed');
+    fadingEls.forEach(el => el.classList.add('dimmed'));
   });
   map.on('moveend', () => {
-    topBarEl.classList.remove('dimmed');
-    bottomCardEl.classList.remove('dimmed');
+    fadingEls.forEach(el => el.classList.remove('dimmed'));
   });
 
   // #bottom-card's height tracks whichever card (plain/route) is actually
@@ -532,18 +533,56 @@
   bottomCardEl.addEventListener('pointercancel', endDrag);
 
   // ---------- pan+zoom-to-bounds ----------
-  // This used to be a hand-rolled requestAnimationFrame loop calling
-  // setView(...,{animate:false}) on every frame for a literal cubic
-  // ease-in-out curve. That fought Leaflet's own zoom machinery — every
-  // frame forced a full tile-grid rebuild, which is what caused the
-  // flashing/jiggling. Native flyToBounds avoids that (one clean
-  // animation, tiles reconciled once) and, as a side effect, scales the
-  // previous zoom level's tiles as a placeholder while new ones load —
-  // which is exactly the "blurred current view as backdrop" effect,
-  // built in for free. easeLinearity close to 0 keeps a pronounced
-  // ease-in/ease-out deceleration curve.
-  function flyToBoundsEased(bounds, opts) {
-    map.flyToBounds(bounds, { duration: 1.7, easeLinearity: 0.15, ...opts });
+  // Native flyToBounds's curve is algorithmically fixed (not a swappable
+  // easing shape), and it always reads as ease-in-out (slow start, fast
+  // middle, slow finish) — not the fast-start/ease-out feel wanted here.
+  // Getting a literal custom easing curve back without reintroducing the
+  // flashing bug (which came from calling setView() every frame, forcing
+  // a full tile-grid rebuild ~60x/sec) means not touching Leaflet's real
+  // view state until the very end. So: scale/translate the whole map
+  // pane with a CSS transform each frame (purely visual, same technique
+  // Leaflet's own zoom animation uses internally), then do exactly ONE
+  // real setView() once the flight finishes — one clean tile
+  // reconciliation, no per-frame churn.
+  function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
+  function flyToBoundsEased(bounds, { paddingTopLeft = [0, 0], paddingBottomRight = [0, 0], duration = 1700 } = {}) {
+    const target = map._getBoundsCenterZoom(bounds, {
+      paddingTopLeft: L.point(paddingTopLeft),
+      paddingBottomRight: L.point(paddingBottomRight)
+    });
+    const startZoom = map.getZoom();
+    const startCenter = map.getCenter();
+    const endZoom = target.zoom;
+    const endCenter = target.center;
+    const startTime = performance.now();
+    const mapPane = map.getPane('mapPane');
+
+    fadingEls.forEach(el => el.classList.add('dimmed'));
+
+    function frame(now) {
+      const t = Math.min(1, (now - startTime) / duration);
+      const e = easeOutCubic(t);
+      const zoom = startZoom + (endZoom - startZoom) * e;
+      const lat = startCenter.lat + (endCenter.lat - startCenter.lat) * e;
+      const lng = startCenter.lng + (endCenter.lng - startCenter.lng) * e;
+
+      if (t < 1) {
+        // same formula Leaflet's own internal _animateZoom uses to scale
+        // the map pane for a target center/zoom relative to the current
+        // (still start-zoom) view, purely visual — no Leaflet state change
+        const scale = map.getZoomScale(zoom, startZoom);
+        const offset = map._getCenterOffset([lat, lng])._divideBy(1 - 1 / scale);
+        L.DomUtil.setTransform(mapPane, offset, scale);
+        requestAnimationFrame(frame);
+      } else {
+        L.DomUtil.setTransform(mapPane, L.point(0, 0), 1);
+        map.setView([lat, lng], zoom, { animate: false });
+        fadingEls.forEach(el => el.classList.remove('dimmed'));
+      }
+    }
+    requestAnimationFrame(frame);
   }
 
   // ---------- markers / route state ----------
@@ -908,6 +947,7 @@
   mapEl.addEventListener('pointerdown', (e) => {
     if (e.button !== undefined && e.button !== 0) return; // left click / first touch only
     if (pressStart) return; // a press is already active (e.g. second pinch finger) — ignore
+    if (destination) return; // a destination is already set — long-press won't replace it; CLEAR first
     const latlng = map.mouseEventToLatLng(e);
     pressStart = { x: e.clientX, y: e.clientY, latlng, pointerId: e.pointerId };
     spawnRipple(e.clientX, e.clientY);
