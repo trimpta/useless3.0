@@ -303,18 +303,36 @@
   }
   #globe-view.show { display: flex; }
   
-  /* the live tunnel-simulation preview — a flat 2D cross-section (not
-     the rotatable 3D globe from the page before this one; once you've
-     committed to digging there's nothing left to look around at), sized
-     to roughly what the globe took on that earlier page, a little
-     smaller. A real child of #tunnel-view's own flex column, in normal
-     flow below #tunnel-top-bar, so it can never cover the close button
-     or layer badge in the first place. */
+  /* the live tunnel-simulation preview — the same rotatable 3D globe as
+     the page before this one, roughly the same amount of screen (a
+     little smaller), positioned below #tunnel-top-bar so the close
+     button and layer badge stay in front of it instead of underneath it
+     (both are otherwise unreachable: the globe would paint over them,
+     and — since it's a sibling z-index:2501 overlay, not a descendant
+     of #tunnel-view — no z-index on #tunnel-view's own children could
+     out-rank it) */
   :root { --tunnel-pip-height: 46vh; }
-  #tunnel-cross-section {
-    position: relative; z-index: 2; flex: none;
-    width: 100%; height: var(--tunnel-pip-height);
-    display: block;
+  #globe-view.pip-mode {
+    position: fixed;
+    top: calc(64px + env(safe-area-inset-top));
+    left: 0;
+    right: 0;
+    bottom: auto;
+    width: 100%;
+    height: var(--tunnel-pip-height);
+    background: transparent;
+    border-radius: 0 0 24px 24px;
+    z-index: 2501; /* above #tunnel-view (2500) */
+    pointer-events: auto; /* let the globe still be dragged/spun */
+    overflow: hidden;
+    box-shadow: 0 12px 24px rgba(0,0,0,0.35);
+    border: none;
+    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  #globe-view.pip-mode #globe-info,
+  #globe-view.pip-mode #globe-hint,
+  #globe-view.pip-mode #globe-close-btn {
+    display: none !important;
   }
   #globe-canvas {
     flex: 2;
@@ -491,7 +509,7 @@
     transform: translate(-50%, -50%);
     border: 4px solid rgba(234, 67, 53, 0.75);
     background: transparent;
-    transition: border-color 0.3s ease;
+    transition: border-color 0.3s ease, transform 0.25s ease;
   }
   #dig-ring.locked {
     border-color: rgba(52, 168, 83, 0.7);
@@ -528,6 +546,7 @@
     height: 66%;
     transform: translate(-50%, -50%);
     pointer-events: none;
+    transition: opacity 0.3s ease;
   }
   #dig-status {
     position: absolute;
@@ -591,10 +610,13 @@
     letter-spacing: 0.04em;
     pointer-events: auto;
     cursor: pointer;
-    transition: opacity 0.25s ease, transform 0.25s ease;
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
   #dig-proceed-btn.show { display: block; }
   #dig-proceed-btn.show.in { opacity: 1; transform: translateX(-50%) translateY(0); }
+  /* leaving the locked-on state: slow one-second fade instead of the
+     snappy pop-in transition, so losing aim doesn't feel trigger-happy */
+  #dig-proceed-btn.leaving { transition: opacity 1s ease, transform 1s ease; }
 
   /* placeholder for the (future) digging game */
   #dig-fake-env {
@@ -764,10 +786,13 @@
 
   /* Main depth display — pushed down below the live preview panel
      (--tunnel-pip-height) so it isn't hidden underneath it */
+  /* pushed down below the live 3D preview (--tunnel-pip-height), which
+     is a fixed overlay, not part of this flex column, so it doesn't
+     push layout on its own */
   #tunnel-center {
     position: relative; z-index: 2; flex: 1;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 6px; padding: 20px;
+    gap: 6px; padding: 20px; padding-top: calc(var(--tunnel-pip-height) + 20px);
     text-align: center; color: #fff;
   }
   #tunnel-depth-label { font-size: 13px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -786,21 +811,53 @@
     padding: 18px 20px calc(24px + env(safe-area-inset-bottom));
     display: flex; flex-direction: column; gap: 14px;
   }
-  #tunnel-temp-header {
+  #tunnel-progress-header {
     display: flex; justify-content: space-between; align-items: center;
     color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 600;
   }
-  #tunnel-temp-value { font-size: 18px; font-weight: 800; color: #fff; }
-  #tunnel-temp-bar-track {
+  #tunnel-progress-pct { font-size: 18px; font-weight: 800; color: #fff; }
+  #tunnel-progress-track {
     height: 10px; background: rgba(255,255,255,0.15); border-radius: 5px; overflow: hidden;
   }
-  #tunnel-temp-bar-fill {
+  #tunnel-progress-fill {
     height: 100%; border-radius: 5px;
-    background: linear-gradient(to right, #4fc3f7, #ff8f00, #f44336);
+    background: linear-gradient(to right, #34a853, #4caf50);
     transition: width 0.4s ease; width: 0%;
   }
   #tunnel-next-info { color: rgba(255,255,255,0.75); font-size: 16px; font-weight: 500; text-align: center; padding: 2px 0; }
   #tunnel-next-info strong { color: #fff; font-weight: 800; }
+  #tunnel-eta { color: rgba(255,255,255,0.55); font-weight: 400; }
+
+  /* a vertical thermometer, fixed on the right edge — bulb + tube with
+     a rising mercury fill, not the horizontal bar this replaced */
+  #tunnel-thermometer {
+    position: absolute; z-index: 2;
+    right: 14px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  #thermo-value {
+    color: #fff; font-size: 11px; font-weight: 700;
+    background: rgba(0,0,0,0.4); padding: 2px 6px; border-radius: 8px;
+    white-space: nowrap;
+  }
+  #thermo-tube {
+    width: 12px; height: 130px; border-radius: 6px;
+    background: rgba(255,255,255,0.15);
+    border: 1.5px solid rgba(255,255,255,0.5);
+    display: flex; align-items: flex-end; overflow: hidden;
+  }
+  #thermo-fill {
+    width: 100%; height: 4%;
+    background: #f44336;
+    transition: height 0.4s ease, background-color 0.4s ease;
+  }
+  #thermo-bulb {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: #f44336;
+    border: 1.5px solid rgba(255,255,255,0.5);
+    margin-top: -3px;
+    transition: background-color 0.4s ease;
+  }
   #tunnel-continue-btn {
     border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.2);
     color: #fff; font-size: 15px; font-weight: 700; letter-spacing: 0.04em;
@@ -989,20 +1046,24 @@
     <div id="tunnel-layer-badge">🪨 Crust</div>
     <div style="width:40px"></div>
   </div>
-  <canvas id="tunnel-cross-section"></canvas>
   <div id="tunnel-center">
     <img id="tunnel-pickaxe" src="./pickaxe.png" alt="Pickaxe">
     <div id="tunnel-depth-label">Depth below surface</div>
     <div id="tunnel-depth-km" class="shake-text">0<span id="tunnel-depth-unit"> km</span></div>
     <div id="tunnel-radius-readout">6,371 km from Earth's centre</div>
   </div>
+  <div id="tunnel-thermometer">
+    <span id="thermo-value">15°C</span>
+    <div id="thermo-tube"><div id="thermo-fill"></div></div>
+    <div id="thermo-bulb"></div>
+  </div>
   <div id="tunnel-bottom-card">
-    <div id="tunnel-temp-header">
-      <span>🌡 Temperature</span>
-      <span id="tunnel-temp-value">15°C</span>
+    <div id="tunnel-progress-header">
+      <span>Progress</span>
+      <span id="tunnel-progress-pct">0%</span>
     </div>
-    <div id="tunnel-temp-bar-track"><div id="tunnel-temp-bar-fill"></div></div>
-    <div id="tunnel-next-info">Next: <strong id="tunnel-next-name">—</strong> — <span id="tunnel-next-dist">—</span></div>
+    <div id="tunnel-progress-track"><div id="tunnel-progress-fill"></div></div>
+    <div id="tunnel-next-info">Next: <strong id="tunnel-next-name">—</strong> — <span id="tunnel-next-dist">—</span> <span id="tunnel-eta"></span></div>
     <button id="tunnel-continue-btn">Continue digging →</button>
   </div>
   <div id="tunnel-arrival">
@@ -1844,6 +1905,7 @@
   let globeCutFaceGroup = null;
   let globeCutNormal = new THREE.Vector3(0, 0, 1);
   let globeRouteObjects = [];
+  let tunnelLiveDot = null; // tracks dig progress along the chord during the tunnel simulation
   let globeAnimating = false;
   let globeDragging = false;
   let globeAutoSpin = false;
@@ -2159,6 +2221,17 @@
       });
     });
 
+    // live tracker dot — hidden until the tunnel simulation starts,
+    // moved along the chord as digging progresses (see animateTunnelDepth)
+    tunnelLiveDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.028, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0x00e676, depthTest: false })
+    );
+    tunnelLiveDot.position.copy(p0);
+    tunnelLiveDot.visible = false;
+    tunnelLiveDot.renderOrder = 999;
+    globeGroup.add(tunnelLiveDot);
+    globeRouteObjects.push(tunnelLiveDot);
   }
 
   function resizeGlobeRenderer() {
@@ -2402,8 +2475,22 @@
   let digTargetElevation = 0; // negative = below horizon
   let digWasLocked = false;
   let digLastVibrate = 0;
-  const DIG_LOCK_MARGIN = 6; // degrees
+  let digProceedHideTimer = null;
+  // hysteresis: locking on requires getting within the tighter margin,
+  // but once locked you stay locked until drifting past the looser one —
+  // without this a steady hand right at the boundary flickers red/green
+  const DIG_LOCK_ENTER = 6;  // degrees
+  const DIG_LOCK_EXIT = 10;  // degrees
   const DIG_VIBRATE_COOLDOWN_MS = 3000;
+  // within this combined angular error, smooth the incoming
+  // heading/elevation deltas instead of tracking them 1:1 — raw device
+  // orientation is jittery, and that jitter reads as "erratic" exactly
+  // when you're closest to the target and paying the most attention
+  const DIG_SMOOTH_THRESHOLD = 18; // degrees
+  const DIG_SMOOTH_ALPHA = 0.18;   // lower = smoother/slower to follow
+  let digSmoothHeadingDelta = 0;
+  let digSmoothElevationDelta = 0;
+  let digHasSmoothed = false;
 
   function normalizeAngleDelta(deg) {
     return ((deg + 540) % 360) - 180; // shortest signed difference, -180..180
@@ -2447,15 +2534,17 @@
     // screen, away from the camera, which is what "aimed correctly"
     // should look like (foreshortened, mostly just the tip visible)
     const arrowMat = new THREE.MeshStandardMaterial({ color: 0xEA4335, roughness: 0.45, metalness: 0.1 });
-    const headGeo = new THREE.ConeGeometry(0.26, 0.62, 20);
+    // longer shaft, shorter tip — reads as a dart/chevron rather than an
+    // ice-cream-cone, closer to a driving-game direction arrow
+    const shaftLen = 0.9, headLen = 0.3;
+    const headGeo = new THREE.ConeGeometry(0.2, headLen, 20);
     headGeo.rotateX(-Math.PI / 2);
-    headGeo.translate(0, 0, -0.62);
+    headGeo.translate(0, 0, -(shaftLen / 2 + headLen / 2));
     digArrowHead = new THREE.Mesh(headGeo, arrowMat);
     digArrowGroup.add(digArrowHead);
 
-    const shaftGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.55, 16);
+    const shaftGeo = new THREE.CylinderGeometry(0.07, 0.07, shaftLen, 16);
     shaftGeo.rotateX(-Math.PI / 2);
-    shaftGeo.translate(0, 0, 0.02);
     digArrowShaft = new THREE.Mesh(shaftGeo, arrowMat);
     digArrowGroup.add(digArrowShaft);
 
@@ -2500,9 +2589,39 @@
     // horizon; tipping it forward/down decreases beta and should aim lower
     const currentElevation = event.beta - 90;
 
-    const headingDelta = normalizeAngleDelta(digTargetBearing - heading);
-    const elevationDelta = digTargetElevation - currentElevation;
-    const locked = Math.abs(headingDelta) < DIG_LOCK_MARGIN && Math.abs(elevationDelta) < DIG_LOCK_MARGIN;
+    const rawHeadingDelta = normalizeAngleDelta(digTargetBearing - heading);
+    const rawElevationDelta = digTargetElevation - currentElevation;
+    const rawErrorDeg = Math.hypot(rawHeadingDelta, rawElevationDelta);
+
+    // only smooth once we're close — far away the raw reading should
+    // track instantly so turning fast still feels responsive
+    let headingDelta, elevationDelta;
+    if (rawErrorDeg < DIG_SMOOTH_THRESHOLD) {
+      if (!digHasSmoothed) {
+        digSmoothHeadingDelta = rawHeadingDelta;
+        digSmoothElevationDelta = rawElevationDelta;
+        digHasSmoothed = true;
+      } else {
+        digSmoothHeadingDelta += (rawHeadingDelta - digSmoothHeadingDelta) * DIG_SMOOTH_ALPHA;
+        digSmoothElevationDelta += (rawElevationDelta - digSmoothElevationDelta) * DIG_SMOOTH_ALPHA;
+      }
+      headingDelta = digSmoothHeadingDelta;
+      elevationDelta = digSmoothElevationDelta;
+    } else {
+      digHasSmoothed = false;
+      headingDelta = rawHeadingDelta;
+      elevationDelta = rawElevationDelta;
+    }
+
+    const errorDeg = Math.hypot(headingDelta, elevationDelta);
+    const lockThreshold = digWasLocked ? DIG_LOCK_EXIT : DIG_LOCK_ENTER;
+    const locked = errorDeg < lockThreshold;
+
+    // the ring "closes in" on the target as aim improves — higher cosine
+    // similarity between the look vector and the target vector shrinks it
+    const cosSim = Math.cos(Math.min(errorDeg, 90) * Math.PI / 180);
+    const ringScale = 1 - 0.18 * Math.max(0, cosSim);
+    digRingEl.style.transform = `translate(-50%, -50%) scale(${ringScale})`;
 
     if (locked) {
       digMarkerEl.classList.add('hidden');
@@ -2519,6 +2638,9 @@
     }
 
     updateDigArrow(headingDelta, elevationDelta, locked);
+    // once aligned, the arrow (still hanging there pointing dead-on) is
+    // just clutter — hide it and let the proceed button take over
+    digArrowCanvasEl.style.opacity = locked ? '0' : '1';
 
     digRingEl.classList.toggle('locked', locked);
     digStatusEl.style.display = locked ? 'none' : '';
@@ -2537,11 +2659,20 @@
         if (navigator.vibrate) navigator.vibrate(200);
       }
 
+      if (digProceedHideTimer) { clearTimeout(digProceedHideTimer); digProceedHideTimer = null; }
+      digProceedBtn.classList.remove('leaving');
       digProceedBtn.classList.add('show');
       requestAnimationFrame(() => digProceedBtn.classList.add('in'));
     } else if (!locked && digWasLocked) {
+      // don't vanish instantly on a small overshoot — fade out over a
+      // second, and cancel the fade if aim recovers before it finishes
+      digProceedBtn.classList.add('leaving');
       digProceedBtn.classList.remove('in');
-      digProceedBtn.classList.remove('show');
+      if (digProceedHideTimer) clearTimeout(digProceedHideTimer);
+      digProceedHideTimer = setTimeout(() => {
+        digProceedBtn.classList.remove('show', 'leaving');
+        digProceedHideTimer = null;
+      }, 1000);
     }
     digWasLocked = locked;
   }
@@ -2551,6 +2682,9 @@
     digTargetBearing = bearingDeg(origin, destination);
     digTargetElevation = -digAngleDeg(haversineKm(origin, destination));
     digWasLocked = false;
+    digHasSmoothed = false;
+    digRingEl.style.transform = '';
+    digArrowCanvasEl.style.opacity = '1';
     document.getElementById('dig-live-dest').textContent = destination.name;
     document.getElementById('dig-live-distance').textContent =
       `${formatDistance(haversineKm(origin, destination))} · ${Math.round(digTargetBearing)}° ${compassLabel(digTargetBearing)} · ${(-digTargetElevation).toFixed(1)}° below horizon`;
@@ -2595,9 +2729,12 @@
   function closeDigView() {
     digViewEl.classList.remove('show');
     digFakeEnvEl.classList.remove('show');
-    digProceedBtn.classList.remove('show', 'in');
+    if (digProceedHideTimer) { clearTimeout(digProceedHideTimer); digProceedHideTimer = null; }
+    digProceedBtn.classList.remove('show', 'in', 'leaving');
     digMarkerEl.classList.remove('hidden');
     digRingEl.classList.remove('locked', 'pulse');
+    digRingEl.style.transform = '';
+    digArrowCanvasEl.style.opacity = '1';
     if (digStream) { digStream.getTracks().forEach(t => t.stop()); digStream = null; }
     if (digOrientationHandler) {
       window.removeEventListener('deviceorientationabsolute', digOrientationHandler);
@@ -2627,12 +2764,50 @@
   /* =========================================================
      Tunnel Layer Simulation
      ========================================================= */
+  // One flat color per layer — geologically-plausible rock tones, not a
+  // neon "fire" palette. Heat is conveyed by the thermometer, not by how
+  // bright the background is. The background continuously blends between
+  // these as depth changes (see currentBgColor()) instead of painting a
+  // fixed top-to-bottom gradient within whichever layer you're in — the
+  // whole screen is one color at any instant, and that color drifts
+  // smoothly over TIME (as you go deeper) rather than over screen space.
   const TUNNEL_LAYERS_DEF = [
-    { name: 'Crust',       emoji: '🪨', bg: 'url(https://www.transparenttextures.com/patterns/dark-matter.png), linear-gradient(180deg,#3a5a2a 0%,#2d4a22 35%,#7a5c1a 70%,#5a3e10 100%)', particle: '#b8a070', cssClass: 'scrolling-bg' },
-    { name: 'Mantle',      emoji: '🔥', bg: 'linear-gradient(180deg,#8b3a00 0%,#cc5500 35%,#ff8c00 70%,#c44a00 100%)', particle: '#ff8844' },
-    { name: 'Outer core',  emoji: '🌊', bg: 'linear-gradient(180deg,#8b0000 0%,#cc0000 35%,#ff2200 70%,#990000 100%)', particle: '#ff6644' },
-    { name: 'Inner core',  emoji: '⚡', bg: 'linear-gradient(180deg,#997700 0%,#ccaa00 35%,#ffdd00 70%,#ff9900 100%)', particle: '#ffee66' },
+    { name: 'Crust',       emoji: '🪨', color: '#3f5c34', particle: '#8fae5a' }, // topsoil/mossy rock
+    { name: 'Mantle',      emoji: '🔥', color: '#5a2a12', particle: '#c9611f' }, // dark basalt/rust
+    { name: 'Outer core',  emoji: '🌊', color: '#3a0a08', particle: '#c22a12' }, // near-black, molten-iron red
+    { name: 'Inner core',  emoji: '⚡', color: '#6b4a15', particle: '#e0a83a' }, // solid iron, warm metal
   ];
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+  function lerpColorHex(hexA, hexB, t) {
+    const a = hexToRgb(hexA), b = hexToRgb(hexB);
+    const r = Math.round(a.r + (b.r - a.r) * t);
+    const g = Math.round(a.g + (b.g - a.g) * t);
+    const bl = Math.round(a.b + (b.b - a.b) * t);
+    return `rgb(${r},${g},${bl})`;
+  }
+  function layerColorByName(name) {
+    return (TUNNEL_LAYERS_DEF.find(l => l.name.toLowerCase() === name.toLowerCase()) || TUNNEL_LAYERS_DEF[0]).color;
+  }
+  // the background color for a given depth — a smooth blend between
+  // whichever two layer-boundary waypoints (tunnelState.crossings,
+  // already sorted ascending) the depth currently falls between
+  function currentBgColor(depthKm) {
+    const crossings = tunnelState.crossings;
+    if (!crossings.length) return layerColorByName('Crust');
+    if (depthKm <= crossings[0].enterAt) return layerColorByName(crossings[0].name);
+    for (let i = 0; i < crossings.length - 1; i++) {
+      const a = crossings[i], b = crossings[i + 1];
+      if (depthKm >= a.enterAt && depthKm <= b.enterAt) {
+        const t = (depthKm - a.enterAt) / Math.max(1e-6, b.enterAt - a.enterAt);
+        return lerpColorHex(layerColorByName(a.name), layerColorByName(b.name), t);
+      }
+    }
+    return layerColorByName(crossings[crossings.length - 1].name);
+  }
 
   // Temperature from radius (km from centre)
   const TEMP_RADII = [6371, 6336, 3481, 1221, 0];
@@ -2662,8 +2837,12 @@
   const tunnelBadgeEl  = document.getElementById('tunnel-layer-badge');
   const tunnelDepthEl  = document.getElementById('tunnel-depth-km');
   const tunnelRadiusEl = document.getElementById('tunnel-radius-readout');
-  const tunnelTempValEl = document.getElementById('tunnel-temp-value');
-  const tunnelTempFillEl = document.getElementById('tunnel-temp-bar-fill');
+  const thermoValueEl = document.getElementById('thermo-value');
+  const thermoFillEl = document.getElementById('thermo-fill');
+  const thermoBulbEl = document.getElementById('thermo-bulb');
+  const tunnelProgressPctEl = document.getElementById('tunnel-progress-pct');
+  const tunnelProgressFillEl = document.getElementById('tunnel-progress-fill');
+  const tunnelEtaEl = document.getElementById('tunnel-eta');
   const tunnelNextNameEl = document.getElementById('tunnel-next-name');
   const tunnelNextDistEl = document.getElementById('tunnel-next-dist');
   const tunnelContinueBtn = document.getElementById('tunnel-continue-btn');
@@ -2680,77 +2859,6 @@
     animFrame: null,
     particles: [],
   };
-
-  // ---------------------------------------------------------------
-  // 2D tunnel cross-section — a flat schematic (not the 3D globe) shown
-  // once you're actually digging: nested circles for crust/mantle/outer
-  // core/inner core at their real relative radii, the chord as a
-  // straight line at the correct perpendicular offset from centre (an
-  // exact 2D circle intersection, not an approximation — both endpoints
-  // sit on the crust circle by construction), and a marker dot tracking
-  // dig progress along it.
-  // ---------------------------------------------------------------
-  const tunnelCanvasEl = document.getElementById('tunnel-cross-section');
-
-  function resizeTunnelCanvas() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = tunnelCanvasEl.clientWidth, h = tunnelCanvasEl.clientHeight;
-    if (!w || !h) return;
-    tunnelCanvasEl.width = w * dpr;
-    tunnelCanvasEl.height = h * dpr;
-    tunnelCanvasEl.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  window.addEventListener('resize', () => {
-    if (tunnelViewEl.classList.contains('show')) {
-      resizeTunnelCanvas();
-      drawTunnelCrossSection(tunnelState.chordLength > 0 ? tunnelState.currentDepth / tunnelState.chordLength : 0);
-    }
-  });
-
-  function drawTunnelCrossSection(progressFrac) {
-    const ctx = tunnelCanvasEl.getContext('2d');
-    const w = tunnelCanvasEl.clientWidth, h = tunnelCanvasEl.clientHeight;
-    if (!w || !h) return;
-    ctx.clearRect(0, 0, w, h);
-
-    const cx = w / 2, cy = h / 2;
-    const R = Math.min(w, h) / 2 * 0.9;
-
-    // nested layers, outermost first, each on top of the previous — flat
-    // solid fills, no gradient, matching the 3D globe's cut-face discs
-    for (let i = 0; i < EARTH_LAYERS.length; i++) {
-      const rPx = R * (EARTH_LAYERS[i].outerRadius / EARTH_RADIUS_KM);
-      ctx.fillStyle = vividLayerColor(EARTH_LAYERS[i].color);
-      ctx.beginPath();
-      ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // the chord: a horizontal line at the closest-approach distance from
-    // centre, clipped exactly to the crust circle
-    const dNorm = tunnelState.closestApproach / EARTH_RADIUS_KM;
-    const yOff = Math.min(0.98, dNorm) * R;
-    const half = Math.sqrt(Math.max(0, R * R - yOff * yOff));
-    const leftX = cx - half, rightX = cx + half, chordY = cy + yOff;
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(leftX, chordY);
-    ctx.lineTo(rightX, chordY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // progress marker
-    const px = leftX + (rightX - leftX) * Math.max(0, Math.min(1, progressFrac));
-    ctx.fillStyle = '#4caf50';
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(px, chordY, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
 
   function openTunnelSimulation(a, b) {
     if (!a || !b) return;
@@ -2772,13 +2880,15 @@
     tunnelArrivalEl.classList.remove('show');
     tunnelViewEl.classList.add('show');
 
-    // the live preview here is a flat 2D cross-section, not the full
-    // rotatable 3D globe from the page before this one — once you've
-    // pointed yourself the right way and committed to digging, there's
-    // nothing left to look around at, just the slice you're moving
-    // through
-    resizeTunnelCanvas();
-    drawTunnelCrossSection(0);
+    // the live preview is the same rotatable 3D globe as the page
+    // before this one, shrunk into a panel rather than replaced —
+    // opened already rotated to face the cut section (rather than the
+    // textured near side) so the layers are visible immediately without
+    // having to spin it first
+    globeViewEl.classList.add('pip-mode');
+    openGlobeView();
+    globeGroup.rotation.y += Math.PI;
+    if (tunnelLiveDot) tunnelLiveDot.visible = true;
 
     buildParticles();
     advanceToLayer(0); // also starts the animation loop
@@ -2788,6 +2898,8 @@
     tunnelViewEl.classList.remove('show');
     if (tunnelState.animFrame) { cancelAnimationFrame(tunnelState.animFrame); tunnelState.animFrame = null; }
     tunnelLastTs = null;
+    globeViewEl.classList.remove('pip-mode');
+    closeGlobeView();
     // same as closeDigView — keep the destination card showing
     if (destination) document.getElementById('card-route').classList.add('show');
   }
@@ -2825,10 +2937,9 @@
       l => l.name.toLowerCase() === crossing.name.toLowerCase()
     ) || TUNNEL_LAYERS_DEF[0];
 
-    tunnelBgEl.style.background = layerDef.bg;
-    if (layerDef.cssClass) tunnelBgEl.classList.add(layerDef.cssClass);
-    else tunnelBgEl.className = '';
-    
+    // background color itself is driven continuously by depth in
+    // animateTunnelDepth (currentBgColor), not set here — this is just
+    // the layer name badge and particle tint
     tunnelBadgeEl.textContent = layerDef.emoji + ' ' + crossing.name;
     setParticleColor(layerDef.particle);
 
@@ -2895,11 +3006,33 @@
     const depthValue = depthFull.slice(0, -depthUnit.length);
     tunnelDepthEl.innerHTML = depthValue + '<span id="tunnel-depth-unit">' + depthUnit + '</span>';
     tunnelRadiusEl.textContent = formatDistance(radiusKm) + ' from Earth\'s centre';
-    tunnelTempValEl.textContent = Math.round(temp).toLocaleString() + '°C';
-    tunnelTempFillEl.style.width = Math.min(100, (temp / TEMP_MAX) * 100) + '%';
 
-    // Update the live tracker dot on the 2D cross-section
-    drawTunnelCrossSection(tunnelState.chordLength > 0 ? depthKm / tunnelState.chordLength : 0);
+    // vertical thermometer
+    const tempPct = Math.min(100, (temp / TEMP_MAX) * 100);
+    thermoValueEl.textContent = Math.round(temp).toLocaleString() + '°C';
+    thermoFillEl.style.height = Math.max(4, tempPct) + '%';
+    const thermoColor = tempPct > 66 ? '#f44336' : tempPct > 33 ? '#ff8f00' : '#4fc3f7';
+    thermoFillEl.style.backgroundColor = thermoColor;
+    thermoBulbEl.style.backgroundColor = thermoColor;
+
+    // overall journey progress + rough time to the next layer boundary
+    const progressPct = tunnelState.chordLength > 0 ? (depthKm / tunnelState.chordLength) * 100 : 0;
+    tunnelProgressPctEl.textContent = Math.round(progressPct) + '%';
+    tunnelProgressFillEl.style.width = Math.min(100, progressPct) + '%';
+    const remainingKm = Math.max(0, tunnelState.targetDepth - depthKm);
+    tunnelEtaEl.textContent = remainingKm > 0.5 ? `(~${Math.max(1, Math.round(remainingKm / TUNNEL_SPEED_KM_S))}s)` : '';
+
+    // background is one flat color at any instant, continuously blended
+    // by depth rather than a fixed spatial gradient within a layer
+    tunnelBgEl.style.backgroundColor = currentBgColor(depthKm);
+
+    // Update the live tracker dot's position on the 3D globe
+    if (tunnelLiveDot && origin && destination) {
+      const gp0 = latLngToVec3(origin.lat, origin.lng, 1);
+      const gp1 = latLngToVec3(destination.lat, destination.lng, 1);
+      const gdir = new THREE.Vector3().subVectors(gp1, gp0).normalize();
+      tunnelLiveDot.position.copy(gp0).addScaledVector(gdir, depthKm / EARTH_RADIUS_KM);
+    }
 
     // Reached the edge of the current layer/section — stop and wait for
     // the user to press Continue rather than crossing into the next
