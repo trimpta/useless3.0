@@ -553,11 +553,11 @@
     // the route card fades/slides up from the bottom OVER the plain card
     document.getElementById('card-route').classList.add('show');
 
-    // eases pan+zoom together over ~1s along an ease-in-out cubic curve
+    // eases pan+zoom together along an ease-in-out cubic curve
     flyToBoundsEased(routeLine.getBounds(), {
       paddingTopLeft: [40, 80],
       paddingBottomRight: [40, 220],
-      duration: 1000
+      duration: 1700
     });
   }
 
