@@ -292,6 +292,110 @@
     cursor: pointer;
   }
 
+  /* ---------- globe preview: 3D Earth cross-section before digging ----------
+     top two thirds = rotatable globe, bottom third = layer crossings */
+  #globe-view {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1900;
+    background: #0d1117;
+    flex-direction: column;
+  }
+  #globe-view.show { display: flex; }
+  #globe-canvas {
+    flex: 2;
+    width: 100%;
+    min-height: 0;
+    display: block;
+    touch-action: none; /* we handle drag-to-rotate ourselves */
+    cursor: grab;
+  }
+  #globe-canvas:active { cursor: grabbing; }
+  #globe-close-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 2;
+  }
+  #globe-hint {
+    position: absolute;
+    top: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.5);
+    font-size: 12px;
+    transition: opacity 0.3s ease;
+  }
+  #globe-info {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    background: #151b24;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding: 16px 18px calc(18px + env(safe-area-inset-bottom));
+    transition: opacity 0.3s ease;
+  }
+  /* both fade out while the user is spinning the globe */
+  #globe-view.rotating #globe-info,
+  #globe-view.rotating #globe-hint { opacity: 0; }
+
+  #globe-info-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  #globe-route { color: #fff; font-size: 15px; font-weight: 700; }
+  #globe-subtitle { color: #8b97a8; font-size: 11px; margin-top: 2px; }
+  #globe-dig-btn {
+    flex: none;
+    border: none;
+    background: #EA4335;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 11px 26px;
+    border-radius: 22px;
+    cursor: pointer;
+  }
+  #globe-warning {
+    display: none;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(234, 67, 53, 0.15);
+    border: 1px solid rgba(234, 67, 53, 0.4);
+    color: #ffb4ad;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  #globe-warning.show { display: block; }
+  #globe-layers { margin-top: 12px; }
+  .globe-layer-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .globe-layer-row:last-child { border-bottom: none; }
+  .globe-layer-swatch {
+    width: 10px; height: 10px; border-radius: 50%; flex: none;
+  }
+  .globe-layer-name { color: #e6edf3; font-size: 13px; flex: 1; }
+  .globe-layer-depth { color: #8b97a8; font-size: 12px; font-variant-numeric: tabular-nums; }
+
   /* ---------- dig view: full-screen AR-style camera + direction arrow ---------- */
   #dig-view {
     display: none;
@@ -564,10 +668,32 @@
         <div class="dig-stat"><span class="dig-label">Dig angle</span><span class="dig-value" id="dig-angle">—</span></div>
       </div>
       <div class="dig-actions">
-        <button id="start-dig-btn">START DIG VIEW</button>
+        <button id="start-dig-btn">PREVIEW TUNNEL</button>
         <button class="clear-route-btn">CLEAR</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- 3D preview shown before the AR dig view: a rotatable translucent
+     globe with Earth's internal layers, the two points, and the straight
+     chord between them; below it, where that chord crosses each layer -->
+<div id="globe-view">
+  <canvas id="globe-canvas"></canvas>
+  <button id="globe-close-btn" title="Close preview">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+  </button>
+  <div id="globe-hint">Drag to spin the globe</div>
+  <div id="globe-info">
+    <div id="globe-info-head">
+      <div>
+        <div id="globe-route">—</div>
+        <div id="globe-subtitle">Straight-line tunnel through the Earth</div>
+      </div>
+      <button id="globe-dig-btn">DIG</button>
+    </div>
+    <div id="globe-warning"></div>
+    <div id="globe-layers"></div>
   </div>
 </div>
 
@@ -606,6 +732,10 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- pinned to the last release shipping a clean UMD build (global THREE);
+     r160+ removed it in favour of ES modules, which would mean an import
+     map / module script for no real gain here -->
+<script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
 <script>
   /* =========================================================
      Search + reverse geocoding now hit the free OSM Nominatim
@@ -1280,6 +1410,238 @@
   mapEl.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // =========================================================
+  // Globe preview — a rotatable translucent Earth showing the straight
+  // chord between the two points and which internal layers it passes
+  // through. Shown before the AR dig view.
+  // =========================================================
+
+  // depths are the standard simplified model, in km from the surface
+  const EARTH_LAYERS = [
+    { name: 'Crust',      outerRadius: 6371, innerRadius: 6336, color: 0x6fa8dc, cssColor: '#6fa8dc' },
+    { name: 'Mantle',     outerRadius: 6336, innerRadius: 3481, color: 0xd9773a, cssColor: '#d9773a' },
+    { name: 'Outer core', outerRadius: 3481, innerRadius: 1221, color: 0xf0a43a, cssColor: '#f0a43a' },
+    { name: 'Inner core', outerRadius: 1221, innerRadius: 0,    color: 0xffe08a, cssColor: '#ffe08a' }
+  ];
+
+  function latLngToVec3(lat, lng, radius) {
+    const phi = lat * Math.PI / 180;
+    const theta = lng * Math.PI / 180;
+    return new THREE.Vector3(
+      radius * Math.cos(phi) * Math.cos(theta),
+      radius * Math.sin(phi),
+      radius * Math.cos(phi) * Math.sin(theta)
+    );
+  }
+
+  // Where does the straight tunnel cross each layer boundary? Solve
+  // |P0 + t*D|^2 = Rb^2 for the entry (smaller positive) root — t is
+  // directly the distance travelled from the origin, since D is a unit
+  // vector in km space.
+  function computeLayerCrossings(a, b) {
+    const p0 = latLngToVec3(a.lat, a.lng, EARTH_RADIUS_KM);
+    const p1 = latLngToVec3(b.lat, b.lng, EARTH_RADIUS_KM);
+    const chord = new THREE.Vector3().subVectors(p1, p0);
+    const chordLength = chord.length();
+    const dir = chord.clone().normalize();
+    const p0DotD = p0.dot(dir);
+    // for two points the same distance from the centre, the perpendicular
+    // from the centre always bisects the chord — so the deepest point is
+    // simply the chord's midpoint
+    const closestApproach = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5).length();
+
+    // the crust starts at the surface, so it's entered immediately; every
+    // other layer is entered where the tunnel crosses the boundary above
+    // it (i.e. the previous layer's inner radius)
+    const crossings = [{ name: EARTH_LAYERS[0].name, cssColor: EARTH_LAYERS[0].cssColor, enterAt: 0 }];
+    for (let i = 1; i < EARTH_LAYERS.length; i++) {
+      const rb = EARTH_LAYERS[i - 1].innerRadius; // boundary between layer i-1 and layer i
+      const disc = p0DotD * p0DotD - (EARTH_RADIUS_KM * EARTH_RADIUS_KM - rb * rb);
+      if (disc < 0) continue; // tunnel never gets this deep
+      const t = -p0DotD - Math.sqrt(disc);
+      if (t > 0 && t < chordLength) {
+        crossings.push({ name: EARTH_LAYERS[i].name, cssColor: EARTH_LAYERS[i].cssColor, enterAt: t });
+      }
+    }
+    return { crossings, closestApproach, chordLength, deepestDepth: EARTH_RADIUS_KM - closestApproach };
+  }
+
+  const globeViewEl = document.getElementById('globe-view');
+  const globeCanvasEl = document.getElementById('globe-canvas');
+  let globeScene = null, globeCamera = null, globeRenderer = null, globeGroup = null;
+  let globeRouteObjects = [];
+  let globeAnimating = false;
+  let globeDragging = false;
+  let globeAutoSpin = true;
+
+  function initGlobeScene() {
+    if (globeRenderer) return;
+    globeScene = new THREE.Scene();
+    globeCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    globeCamera.position.set(0, 0, 3.1);
+    globeRenderer = new THREE.WebGLRenderer({ canvas: globeCanvasEl, antialias: true, alpha: true });
+    globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    globeGroup = new THREE.Group();
+    globeScene.add(globeGroup);
+
+    // nested translucent shells, outermost first, so you can see into the
+    // core through the crust/mantle
+    EARTH_LAYERS.forEach((layer, i) => {
+      const r = layer.outerRadius / EARTH_RADIUS_KM;
+      const opacity = [0.10, 0.22, 0.42, 0.95][i];
+      const shell = new THREE.Mesh(
+        new THREE.SphereGeometry(r, 48, 32),
+        new THREE.MeshBasicMaterial({
+          color: layer.color, transparent: true, opacity,
+          depthWrite: false, side: THREE.DoubleSide
+        })
+      );
+      globeGroup.add(shell);
+    });
+
+    // surface grid so the rotation reads clearly
+    globeGroup.add(new THREE.Mesh(
+      new THREE.SphereGeometry(1.001, 24, 16),
+      new THREE.MeshBasicMaterial({ color: 0x8ab4f8, wireframe: true, transparent: true, opacity: 0.18, depthWrite: false })
+    ));
+  }
+
+  function clearGlobeRoute() {
+    globeRouteObjects.forEach(o => {
+      globeGroup.remove(o);
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    });
+    globeRouteObjects = [];
+  }
+
+  function drawGlobeRoute(a, b) {
+    clearGlobeRoute();
+    const p0 = latLngToVec3(a.lat, a.lng, 1);
+    const p1 = latLngToVec3(b.lat, b.lng, 1);
+
+    [[p0, 0x4285F4], [p1, 0xEA4335]].forEach(([pos, color]) => {
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.035, 16, 12),
+        new THREE.MeshBasicMaterial({ color })
+      );
+      dot.position.copy(pos);
+      globeGroup.add(dot);
+      globeRouteObjects.push(dot);
+    });
+
+    // a thin cylinder rather than THREE.Line — line widths above 1px are
+    // ignored by most browsers, and this chord needs to read clearly
+    const chord = new THREE.Vector3().subVectors(p1, p0);
+    const tube = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.012, 0.012, chord.length(), 12),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    tube.position.copy(new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5));
+    tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), chord.clone().normalize());
+    globeGroup.add(tube);
+    globeRouteObjects.push(tube);
+
+    // face the camera at the midpoint of the route to start with
+    const mid = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
+    if (mid.lengthSq() > 1e-6) {
+      const m = mid.clone().normalize();
+      globeGroup.rotation.y = -Math.atan2(m.z, m.x);
+      globeGroup.rotation.x = Math.asin(Math.max(-1, Math.min(1, m.y))) * 0.6;
+    }
+  }
+
+  function resizeGlobeRenderer() {
+    if (!globeRenderer) return;
+    const w = globeCanvasEl.clientWidth, h = globeCanvasEl.clientHeight;
+    if (!w || !h) return;
+    globeRenderer.setSize(w, h, false);
+    globeCamera.aspect = w / h;
+    globeCamera.updateProjectionMatrix();
+  }
+
+  function globeRenderLoop() {
+    if (!globeAnimating) return;
+    if (globeAutoSpin && !globeDragging) globeGroup.rotation.y += 0.0015;
+    globeRenderer.render(globeScene, globeCamera);
+    requestAnimationFrame(globeRenderLoop);
+  }
+
+  function renderLayerList(a, b) {
+    const { crossings, deepestDepth } = computeLayerCrossings(a, b);
+    const listEl = document.getElementById('globe-layers');
+    listEl.innerHTML = crossings.map(c => `
+      <div class="globe-layer-row">
+        <span class="globe-layer-swatch" style="background:${c.cssColor}"></span>
+        <span class="globe-layer-name">${c.name}</span>
+        <span class="globe-layer-depth">${c.enterAt < 1 ? 'at the surface' : formatDistance(c.enterAt) + ' in'}</span>
+      </div>
+    `).join('') + `
+      <div class="globe-layer-row">
+        <span class="globe-layer-swatch" style="background:#8b97a8"></span>
+        <span class="globe-layer-name">Deepest point below surface</span>
+        <span class="globe-layer-depth">${formatDistance(deepestDepth)}</span>
+      </div>`;
+
+    const warnEl = document.getElementById('globe-warning');
+    const hitsOuterCore = crossings.some(c => c.name === 'Outer core');
+    const hitsInnerCore = crossings.some(c => c.name === 'Inner core');
+    if (hitsInnerCore) {
+      warnEl.textContent = '⚠️ This tunnel passes through the inner core — roughly 5,200°C and solid iron. Bring serious heat protection.';
+      warnEl.classList.add('show');
+    } else if (hitsOuterCore) {
+      warnEl.textContent = '⚠️ This tunnel passes through the molten outer core — around 4,000°C of liquid iron. Bring heat protection.';
+      warnEl.classList.add('show');
+    } else {
+      warnEl.classList.remove('show');
+    }
+  }
+
+  function openGlobeView() {
+    if (!destination) return;
+    globeViewEl.classList.add('show');
+    initGlobeScene();
+    resizeGlobeRenderer();
+    drawGlobeRoute(origin, destination);
+    renderLayerList(origin, destination);
+    document.getElementById('globe-route').textContent = `${origin.name} → ${destination.name}`;
+    globeAnimating = true;
+    requestAnimationFrame(globeRenderLoop);
+  }
+
+  function closeGlobeView() {
+    globeViewEl.classList.remove('show');
+    globeAnimating = false;
+  }
+
+  // drag to spin (rotation only — no zoom), fading the UI while dragging
+  let globeDragLast = null;
+  globeCanvasEl.addEventListener('pointerdown', (e) => {
+    globeDragging = true;
+    globeDragLast = { x: e.clientX, y: e.clientY };
+    globeViewEl.classList.add('rotating');
+    try { globeCanvasEl.setPointerCapture(e.pointerId); } catch (err) { /* no active pointer to capture */ }
+  });
+  globeCanvasEl.addEventListener('pointermove', (e) => {
+    if (!globeDragging) return;
+    const dx = e.clientX - globeDragLast.x;
+    const dy = e.clientY - globeDragLast.y;
+    globeDragLast = { x: e.clientX, y: e.clientY };
+    globeGroup.rotation.y += dx * 0.006;
+    globeGroup.rotation.x = Math.max(-1.45, Math.min(1.45, globeGroup.rotation.x + dy * 0.006));
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
+    globeCanvasEl.addEventListener(evt, () => {
+      if (!globeDragging) return;
+      globeDragging = false;
+      globeViewEl.classList.remove('rotating');
+    });
+  });
+  window.addEventListener('resize', resizeGlobeRenderer);
+
+  document.getElementById('globe-close-btn').addEventListener('click', closeGlobeView);
+
+  // =========================================================
   // Dig view — AR-style camera overlay with a direction arrow for
   // destinations far enough that the straight-line chord runs through
   // the Earth (see DIG_THRESHOLD_KM / digAngleDeg above).
@@ -1425,7 +1787,13 @@
     }
   }
 
-  document.getElementById('start-dig-btn').addEventListener('click', openDigView);
+  // the card's button now opens the 3D preview first; the AR dig view is
+  // entered from there
+  document.getElementById('start-dig-btn').addEventListener('click', openGlobeView);
+  document.getElementById('globe-dig-btn').addEventListener('click', () => {
+    closeGlobeView();
+    openDigView();
+  });
   document.getElementById('dig-close-btn').addEventListener('click', closeDigView);
   digPermissionBtn.addEventListener('click', startDigOrientation);
   digProceedBtn.addEventListener('click', () => digFakeEnvEl.classList.add('show'));
