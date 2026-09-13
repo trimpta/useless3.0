@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tile Provider Playground</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: #111;
+    color: #eee;
+  }
+  header {
+    padding: 12px 16px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #333;
+  }
+  header h1 { font-size: 16px; margin: 0 0 4px; }
+  header p { font-size: 12px; color: #999; margin: 0; }
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+    padding: 14px;
+  }
+  .cell {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .cell .label {
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    background: #222;
+    border-bottom: 1px solid #333;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .cell .label span.tag {
+    font-weight: 400;
+    color: #888;
+    font-size: 11px;
+  }
+  .map {
+    height: 260px;
+    width: 100%;
+    background: #222;
+  }
+  .leaflet-control-attribution { font-size: 9px !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Tile Provider Playground</h1>
+  <p>Tinkering page — pan/zoom is synced across all maps. Pick whichever style fits the app.</p>
+</header>
+
+<div id="grid"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const START = [20.5937, 78.9629]; // India-ish default center
+  const START_ZOOM = 4;
+
+  // Free, no-API-key-required tile providers.
+  const providers = [
+    {
+      name: "OSM Standard",
+      url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      attribution: "&copy; OpenStreetMap contributors",
+      subdomains: "abc"
+    },
+    {
+      name: "CyclOSM",
+      url: "https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png",
+      attribution: "&copy; OpenStreetMap contributors, CyclOSM",
+      subdomains: "abc"
+    },
+    {
+      name: "Humanitarian OSM",
+      url: "https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+      attribution: "&copy; OpenStreetMap contributors, Humanitarian OSM Team",
+      subdomains: "abc"
+    },
+    {
+      name: "OpenTopoMap",
+      url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+      attribution: "&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap",
+      subdomains: "abc"
+    },
+    {
+      name: "Esri World Street Map",
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+      attribution: "&copy; Esri, HERE, Garmin, OpenStreetMap contributors",
+      subdomains: ""
+    },
+    {
+      name: "Esri World Imagery (satellite)",
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      attribution: "&copy; Esri, Maxar, Earthstar Geographics",
+      subdomains: ""
+    }
+  ];
+
+  const grid = document.getElementById("grid");
+  const maps = [];
+
+  providers.forEach((p, i) => {
+    const cell = document.createElement("div");
+    cell.className = "cell";
+    cell.innerHTML = `
+      <div class="label">${p.name} <span class="tag">${p.url.split("/")[2]}</span></div>
+      <div class="map" id="map-${i}"></div>
+    `;
+    grid.appendChild(cell);
+
+    const map = L.map(`map-${i}`, {
+      center: START,
+      zoom: START_ZOOM,
+      zoomControl: false,
+      attributionControl: true
+    });
+
+    L.tileLayer(p.url, {
+      subdomains: p.subdomains,
+      attribution: p.attribution,
+      maxZoom: 19
+    }).addTo(map);
+
+    maps.push(map);
+  });
+
+  // Sync pan/zoom across every map so you're comparing the same view.
+  let syncing = false;
+  maps.forEach((m) => {
+    m.on("move", () => {
+      if (syncing) return;
+      syncing = true;
+      const center = m.getCenter();
+      const zoom = m.getZoom();
+      maps.forEach((other) => {
+        if (other !== m) other.setView(center, zoom, { animate: false });
+      });
+      syncing = false;
+    });
+  });
+</script>
+
+</body>
+</html>
