@@ -311,7 +311,7 @@
      and — since it's a sibling z-index:2501 overlay, not a descendant
      of #tunnel-view — no z-index on #tunnel-view's own children could
      out-rank it) */
-  :root { --tunnel-pip-height: 46vh; }
+  :root { --tunnel-pip-height: 54vh; }
   #globe-view.pip-mode {
     position: fixed;
     top: calc(64px + env(safe-area-inset-top));
@@ -325,7 +325,6 @@
     z-index: 2501; /* above #tunnel-view (2500) */
     pointer-events: auto; /* let the globe still be dragged/spun */
     overflow: hidden;
-    box-shadow: 0 12px 24px rgba(0,0,0,0.35);
     border: none;
     transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -726,11 +725,12 @@
     height: 64px;
     margin: 0 auto 10px auto;
     display: block;
+    transform-origin: 15% 100%; /* bottom-left grip — swings from the handle, not the middle */
     animation: mineSwing 0.4s infinite alternate ease-in-out;
   }
   @keyframes mineSwing {
-    0% { transform: translateY(0) rotate(0deg); }
-    100% { transform: translateY(12px) rotate(-20deg); }
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(-25deg); }
   }
 
   .scrolling-bg {
@@ -840,8 +840,13 @@
     border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.2);
     color: #fff; font-size: 15px; font-weight: 700; letter-spacing: 0.04em;
     padding: 14px; border-radius: 14px; cursor: pointer;
-    transition: background 0.2s ease, transform 0.1s ease;
+    opacity: 0; transform: translateY(10px); pointer-events: none;
+    transition: background 0.2s ease, opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
+  /* only interactable once digging has actually paused at the boundary —
+     otherwise it sat there the whole time you were still moving, so
+     nothing visibly changed at the moment you actually reached the edge */
+  #tunnel-continue-btn.ready { opacity: 1; transform: translateY(0); pointer-events: auto; }
   #tunnel-continue-btn:active { transform: scale(0.97); }
   #tunnel-continue-btn:hover { background: rgba(255,255,255,0.3); }
 
@@ -851,14 +856,14 @@
     background: linear-gradient(180deg, #1a3a2a 0%, #0d2016 100%);
     flex-direction: column; align-items: center; justify-content: center;
     text-align: center; padding: 32px 24px calc(32px + env(safe-area-inset-bottom));
-    gap: 14px; color: #fff; animation: tunnelArrivalIn 0.6s ease;
+    gap: 16px; color: #fff; animation: tunnelArrivalIn 0.6s ease;
   }
   #tunnel-arrival.show { display: flex; }
   @keyframes tunnelArrivalIn {
     from { opacity: 0; transform: translateY(30px); }
     to   { opacity: 1; transform: translateY(0); }
   }
-  #tunnel-arrival-globe { font-size: 72px; line-height: 1; }
+  #tunnel-arrival-globe { font-size: 72px; line-height: 1; margin-bottom: 8px; }
   #tunnel-arrival-title { font-size: 28px; font-weight: 800; }
   #tunnel-arrival-dest { font-size: 17px; opacity: 0.7; }
   #tunnel-arrival-stats { margin-top: 8px; display: flex; gap: 20px; justify-content: center; }
@@ -1937,6 +1942,15 @@
     const earthTex = texLoader.load(
       'https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg'
     );
+    // This texture is mirrored east-west relative to the lat/lng -> 3D
+    // convention latLngToVec3() uses (confirmed by testing: without this,
+    // origin/destination markers land nowhere near their real texture
+    // location — e.g. a marker in India would sit over Africa). Flipping
+    // horizontally instead of hand-rotating the sphere is the only fix
+    // that lines up correctly at every longitude, not just one.
+    earthTex.wrapS = THREE.RepeatWrapping;
+    earthTex.repeat.x = -1;
+    earthTex.offset.x = 1;
 
     // Layer fill colours shown on the cross-section discs
     const LAYER_FILL    = [0x6fa8dc, 0xd9773a, 0xf0a43a, 0xffe08a]; // crust/mantle/outer-core/inner-core
@@ -1965,7 +1979,6 @@
             clippingPlanes: [globeClippingPlane]
           });
       const shellMesh = new THREE.Mesh(new THREE.SphereGeometry(r, 64, 40), shellMat);
-      if (i === 0) shellMesh.rotation.y = -Math.PI / 2; // align prime meridian with +X
       globeGroup.add(shellMesh);
 
       // --- Flat disc cap on the cross-section face ---
@@ -2059,6 +2072,7 @@
     // Auto-spin the globe around the Y axis so the cut face is pointing generally towards the camera (+Z)
     const angleToCamera = Math.atan2(worldNormal.x, worldNormal.z);
     globeGroup.rotation.set(0, angleToCamera, 0);
+    globeCumulativePitch = 0;
     globeGroup.updateMatrixWorld();
 
     // ----------------------------------------------------------------
@@ -2224,10 +2238,17 @@
 
   function globeRenderLoop() {
     if (!globeAnimating) return;
-    if (!globeDragging && Math.abs(globeVelocity.x) > 0.0001) {
-      globeGroup.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), globeVelocity.x);
-      globeVelocity.x *= 0.92;
-      
+    if (!globeDragging && (Math.abs(globeVelocity.x) > 0.0001 || Math.abs(globeVelocity.y) > 0.0001)) {
+      if (Math.abs(globeVelocity.x) > 0.0001) {
+        globeGroup.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), globeVelocity.x);
+        globeVelocity.x *= 0.92;
+      }
+      if (Math.abs(globeVelocity.y) > 0.0001) {
+        globeCumulativePitch = applyGlobePitch(globeVelocity.y);
+        globeVelocity.y *= 0.92;
+        if (Math.abs(globeCumulativePitch) >= GLOBE_PITCH_LIMIT) globeVelocity.y = 0;
+      }
+
       globeGroup.updateMatrixWorld();
       const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), globeCutDistance);
       globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
@@ -2382,36 +2403,57 @@
     }
   };
 
-  // drag to spin, with fling inertia on release
+  // drag to spin, with fling inertia on release — horizontal drag yaws
+  // around the world Y axis (unlimited), vertical drag pitches around the
+  // world X axis (clamped so you can't flip the globe pole-over-pole)
   let globeDragLast = null;
   let globeVelocity = { x: 0, y: 0 };
+  let globeCumulativePitch = 0;
+  const GLOBE_PITCH_LIMIT = 1.3; // radians (~74.5deg) either side of level
   // time-smoothed px/ms speed, independent of per-move rotation step —
   // using only the last pointermove's delta (as before) meant a fast
   // flick that naturally decelerates right before lift-off left almost
   // no coast; this tracks real speed so a hard flick keeps spinning
   let globeFlingSpeed = 0;
+  let globeFlingSpeedY = 0;
   const GLOBE_FLING_MAX = 0.09; // rad applied per frame, cap so it can't run away
+
+  function applyGlobePitch(deltaRad) {
+    const next = Math.max(-GLOBE_PITCH_LIMIT, Math.min(GLOBE_PITCH_LIMIT, globeCumulativePitch + deltaRad));
+    const clampedDelta = next - globeCumulativePitch;
+    if (Math.abs(clampedDelta) > 1e-9) {
+      globeGroup.rotateOnWorldAxis(new THREE.Vector3(1, 0, 0), clampedDelta);
+    }
+    return next;
+  }
+
   globeCanvasEl.addEventListener('pointerdown', (e) => {
     globeDragging = true;
     globeDragLast = { x: e.clientX, y: e.clientY, t: performance.now() };
     globeVelocity = { x: 0, y: 0 };
     globeFlingSpeed = 0;
+    globeFlingSpeedY = 0;
     try { globeCanvasEl.setPointerCapture(e.pointerId); } catch (err) { /* no active pointer to capture */ }
   });
   globeCanvasEl.addEventListener('pointermove', (e) => {
     if (!globeDragging) return;
     const now = performance.now();
     const dx = e.clientX - globeDragLast.x;
+    const dy = e.clientY - globeDragLast.y;
     const dt = Math.max(1, now - globeDragLast.t); // ms, floored to avoid div-by-0
     globeDragLast = { x: e.clientX, y: e.clientY, t: now };
     globeVelocity.x = dx * 0.006;
+    globeVelocity.y = dy * 0.006;
 
     // exponential moving average of px/ms — smooths out jitter between
     // individual move events while still tracking a genuine fast flick
     const instSpeed = dx / dt;
     globeFlingSpeed = globeFlingSpeed * 0.7 + instSpeed * 0.3;
+    const instSpeedY = dy / dt;
+    globeFlingSpeedY = globeFlingSpeedY * 0.7 + instSpeedY * 0.3;
 
     globeGroup.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), globeVelocity.x);
+    globeCumulativePitch = applyGlobePitch(globeVelocity.y);
 
     globeGroup.updateMatrixWorld();
     const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), globeCutDistance);
@@ -2426,6 +2468,8 @@
       // coasts at all, since globeFlingSpeed stays near zero for it
       const flungVelocity = globeFlingSpeed * 0.02;
       globeVelocity.x = Math.max(-GLOBE_FLING_MAX, Math.min(GLOBE_FLING_MAX, flungVelocity));
+      const flungVelocityY = globeFlingSpeedY * 0.02;
+      globeVelocity.y = Math.max(-GLOBE_FLING_MAX, Math.min(GLOBE_FLING_MAX, flungVelocityY));
     });
   });
   window.addEventListener('resize', resizeGlobeRenderer);
@@ -2935,19 +2979,21 @@
     tunnelBadgeEl.textContent = layerDef.emoji + ' ' + crossing.name;
     setParticleColor(layerDef.particle);
 
-    // Next crossing info
+    // Next crossing info — the Continue button itself only pops in once
+    // animateTunnelDepth actually pauses at the boundary (see .ready),
+    // not immediately here, so reaching each new boundary is a visible event
+    tunnelContinueBtn.classList.remove('ready');
     const next = crossings[idx + 1];
     if (next) {
       tunnelNextNameEl.textContent = next.name;
       const distToNext = next.enterAt - (crossing.enterAt || 0);
       tunnelNextDistEl.textContent = formatDistance(distToNext) + ' away';
-      tunnelContinueBtn.style.display = '';
+      tunnelContinueBtn.textContent = 'Continue digging →';
     } else {
       // Last layer — continue goes to arrival
       tunnelNextNameEl.textContent = 'the surface';
       tunnelNextDistEl.textContent = 'Keep going!';
       tunnelContinueBtn.textContent = 'Emerge on the other side →';
-      tunnelContinueBtn.style.display = '';
     }
 
     // Set depth animation target: go to the START of the next layer (or
@@ -3031,6 +3077,7 @@
       cancelAnimationFrame(tunnelState.animFrame);
       tunnelState.animFrame = null;
       tunnelLastTs = null;
+      tunnelContinueBtn.classList.add('ready');
     }
   }
 
