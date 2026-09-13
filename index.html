@@ -303,21 +303,29 @@
   }
   #globe-view.show { display: flex; }
   
+  /* the live tunnel-simulation preview — roughly the same amount of
+     screen the globe took on the preview page before digging (a little
+     smaller), positioned below #tunnel-top-bar so the close button and
+     layer badge stay in front of it instead of underneath it (both are
+     otherwise unreachable: the globe would paint over them, and — since
+     it's a sibling z-index:2501 overlay, not a descendant of #tunnel-view
+     — no z-index on #tunnel-view's own children could out-rank it) */
+  :root { --tunnel-pip-height: 46vh; }
   #globe-view.pip-mode {
     position: fixed;
-    top: calc(24px + env(safe-area-inset-top));
-    right: 24px;
-    left: auto;
+    top: calc(64px + env(safe-area-inset-top));
+    left: 0;
+    right: 0;
     bottom: auto;
-    width: 140px;
-    height: 140px;
+    width: 100%;
+    height: var(--tunnel-pip-height);
     background: transparent;
-    border-radius: 50%;
+    border-radius: 0 0 24px 24px;
     z-index: 2501; /* above #tunnel-view (2500) */
     pointer-events: none; /* Let clicks pass through to tunnel UI */
     overflow: hidden;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.35);
+    border: none;
     transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   }
   #globe-view.pip-mode #globe-info,
@@ -757,11 +765,13 @@
     padding: 7px 16px; border-radius: 20px;
   }
 
-  /* Main depth display */
+  /* Main depth display — pushed down below the live preview panel
+     (--tunnel-pip-height) so it isn't hidden underneath it */
   #tunnel-center {
     position: relative; z-index: 2; flex: 1;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 6px; padding: 20px; text-align: center; color: #fff;
+    gap: 6px; padding: 20px; padding-top: calc(var(--tunnel-pip-height) + 20px);
+    text-align: center; color: #fff;
   }
   #tunnel-depth-label { font-size: 13px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; }
   #tunnel-depth-km {
@@ -792,8 +802,8 @@
     background: linear-gradient(to right, #4fc3f7, #ff8f00, #f44336);
     transition: width 0.4s ease; width: 0%;
   }
-  #tunnel-next-info { color: rgba(255,255,255,0.65); font-size: 12px; text-align: center; }
-  #tunnel-next-info strong { color: rgba(255,255,255,0.9); }
+  #tunnel-next-info { color: rgba(255,255,255,0.75); font-size: 16px; font-weight: 500; text-align: center; padding: 2px 0; }
+  #tunnel-next-info strong { color: #fff; font-weight: 800; }
   #tunnel-continue-btn {
     border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.2);
     color: #fff; font-size: 15px; font-weight: 700; letter-spacing: 0.04em;
@@ -1410,6 +1420,13 @@
       document.getElementById('dig-distance').textContent = distText;
       document.getElementById('dig-bearing').textContent = `${Math.round(bearing)}° ${compassLabel(bearing)}`;
       document.getElementById('dig-angle').textContent = `${angle.toFixed(1)}° below horizon`;
+      // the non-dig branch below shows the route card itself (it's the
+      // one drawing the line) — this branch skipped it entirely, so
+      // whenever you came back to the map from a dig-mode destination
+      // (closing the globe/dig/tunnel views without ever passing back
+      // through here) it still showed the plain "you are here" card
+      document.getElementById('card-route').classList.add('show');
+      syncBottomCardHeight();
       // Open globe view directly (no intermediate card step)
       openGlobeView();
     } else {
@@ -1475,6 +1492,11 @@
   }
 
   document.getElementById('locate-btn').addEventListener('click', () => {
+    // "find my location" is one of the two explicit ways back to the
+    // plain origin view — the other is the CLEAR button on the route
+    // card itself. Everywhere else (closing the dig/tunnel views), the
+    // destination card is left showing.
+    clearDestination();
     map.setView([origin.lat, origin.lng], 15);
   });
 
@@ -2260,6 +2282,28 @@
         velocityX: globeVelocity.x,
         dragging: globeDragging
       };
+    },
+    // tunnel-simulation hooks — openTunnel bypasses the dig-view compass
+    // alignment (which needs real device sensors) so the simulation can
+    // be reached directly for testing
+    openTunnel() {
+      openTunnelSimulation(origin, destination);
+      return this.tunnelState();
+    },
+    closeTunnel: () => closeTunnelSimulation(),
+    pressContinue() {
+      tunnelContinueBtn.click();
+      return this.tunnelState();
+    },
+    tunnelState() {
+      return {
+        shown: tunnelViewEl.classList.contains('show'),
+        layerIdx: tunnelState.currentLayerIdx,
+        currentDepth: +tunnelState.currentDepth.toFixed(1),
+        targetDepth: +tunnelState.targetDepth.toFixed(1),
+        animating: !!tunnelState.animFrame,
+        cardRouteShown: document.getElementById('card-route').classList.contains('show')
+      };
     }
   };
 
@@ -2457,6 +2501,10 @@
       window.removeEventListener('deviceorientation', digOrientationHandler);
       digOrientationHandler = null;
     }
+    // back to the map should keep showing the destination you set, not
+    // revert to the plain "you are here" origin card — that only happens
+    // via the CLEAR button or the locate button
+    if (destination) document.getElementById('card-route').classList.add('show');
   }
 
   // start-dig-btn opens globe view from the card (kept as fallback)
@@ -2554,15 +2602,17 @@
     if (tunnelLiveDot) tunnelLiveDot.visible = true;
 
     buildParticles();
-    advanceToLayer(0);
-    animateTunnelDepth();
+    advanceToLayer(0); // also starts the animation loop
   }
 
   function closeTunnelSimulation() {
     tunnelViewEl.classList.remove('show');
     if (tunnelState.animFrame) { cancelAnimationFrame(tunnelState.animFrame); tunnelState.animFrame = null; }
+    tunnelLastTs = null;
     globeViewEl.classList.remove('pip-mode');
     closeGlobeView();
+    // same as closeDigView — keep the destination card showing
+    if (destination) document.getElementById('card-route').classList.add('show');
   }
 
   function buildParticles() {
@@ -2620,9 +2670,16 @@
       tunnelContinueBtn.style.display = '';
     }
 
-    // Set depth animation target: go to the START of the next layer (or chord end)
+    // Set depth animation target: go to the START of the next layer (or
+    // chord end) and stop there — animateTunnelDepth no longer crosses
+    // this on its own, so restart its loop here in case it stopped at
+    // the previous layer's edge waiting for this call (via Continue)
     const nextBoundary = next ? next.enterAt : tunnelState.chordLength;
     tunnelState.targetDepth = nextBoundary;
+    if (!tunnelState.animFrame) {
+      tunnelLastTs = null;
+      tunnelState.animFrame = requestAnimationFrame(animateTunnelDepth);
+    }
   }
 
   let tunnelLastTs = null;
@@ -2652,8 +2709,15 @@
     const temp = tempFromRadius(radiusKm);
 
     // Update readouts
-    tunnelDepthEl.innerHTML = formatDistance(depthKm) + '<span id="tunnel-depth-unit"> km</span>';
-    tunnelRadiusEl.textContent = formatDistance(radiusKm) + ' km from Earth\'s centre';
+    // formatDistance() already appends the unit (e.g. "39.2 km") — split
+    // it back out so the number and unit can keep their separate sizes
+    // (this used to just concatenate another " km" on top, showing
+    // "39.2 km km")
+    const depthFull = formatDistance(depthKm);
+    const depthUnit = depthFull.endsWith(' km') ? ' km' : ' m';
+    const depthValue = depthFull.slice(0, -depthUnit.length);
+    tunnelDepthEl.innerHTML = depthValue + '<span id="tunnel-depth-unit">' + depthUnit + '</span>';
+    tunnelRadiusEl.textContent = formatDistance(radiusKm) + ' from Earth\'s centre';
     tunnelTempValEl.textContent = Math.round(temp).toLocaleString() + '°C';
     tunnelTempFillEl.style.width = Math.min(100, (temp / TEMP_MAX) * 100) + '%';
 
@@ -2666,20 +2730,15 @@
       tunnelLiveDot.position.copy(p0).addScaledVector(dir, distUnit);
     }
 
-    // Auto-advance when reaching target (end of current layer)
-    const crossings = tunnelState.crossings;
-    const idx = tunnelState.currentLayerIdx;
-    const next = crossings[idx + 1];
-    const boundary = next ? next.enterAt : tunnelState.chordLength;
-    if (tunnelState.currentDepth >= boundary - 0.5) {
-      if (tunnelState.currentDepth >= tunnelState.chordLength - 0.5 && !next) {
-        // Reached the end
-        cancelAnimationFrame(tunnelState.animFrame);
-        tunnelState.animFrame = null;
-        showArrival();
-      } else {
-        advanceToLayer(idx + 1);
-      }
+    // Reached the edge of the current layer/section — stop and wait for
+    // the user to press Continue rather than crossing into the next
+    // layer (or surfacing) automatically. Passive digging only ever
+    // drifts you up to the boundary, never through it.
+    const boundary = tunnelState.targetDepth;
+    if (tunnelState.currentDepth >= boundary - 0.5 && tunnelState.animFrame) {
+      cancelAnimationFrame(tunnelState.animFrame);
+      tunnelState.animFrame = null;
+      tunnelLastTs = null;
     }
   }
 
