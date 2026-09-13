@@ -696,20 +696,6 @@
     transition: background 0.8s ease;
     overflow: hidden;
   }
-  #tunnel-bg::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: repeating-linear-gradient(
-      0deg, transparent, transparent 18px,
-      rgba(0,0,0,0.07) 18px, rgba(0,0,0,0.07) 20px
-    );
-    animation: tunnelScroll 1s linear infinite;
-  }
-  @keyframes tunnelScroll {
-    from { background-position: 0 0; }
-    to   { background-position: 0 -40px; }
-  }
   #tunnel-particles { position: absolute; inset: 0; pointer-events: none; }
   .tunnel-particle {
     position: absolute;
@@ -738,22 +724,6 @@
   @keyframes mineSwing {
     0% { transform: translateY(0) rotate(0deg); }
     100% { transform: translateY(12px) rotate(-20deg); }
-  }
-
-  .shake-text {
-    display: inline-block;
-    animation: rumble 0.1s infinite;
-  }
-  .fast-shake-text {
-    display: inline-block;
-    animation: rumble 0.05s infinite;
-  }
-  @keyframes rumble {
-    0% { transform: translate(1px, 1px) rotate(0deg); }
-    25% { transform: translate(-1px, -2px) rotate(-1deg); }
-    50% { transform: translate(-2px, 0px) rotate(1deg); }
-    75% { transform: translate(2px, 2px) rotate(0deg); }
-    100% { transform: translate(1px, -1px) rotate(-1deg); }
   }
 
   .scrolling-bg {
@@ -790,10 +760,11 @@
      is a fixed overlay, not part of this flex column, so it doesn't
      push layout on its own */
   #tunnel-center {
-    position: relative; z-index: 2; flex: 1;
+    position: relative; z-index: 2; flex: 1; min-height: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 6px; padding: 20px; padding-top: calc(var(--tunnel-pip-height) + 20px);
     text-align: center; color: #fff;
+    overflow: hidden;
   }
   #tunnel-depth-label { font-size: 13px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; }
   #tunnel-depth-km {
@@ -832,7 +803,7 @@
      a rising mercury fill, not the horizontal bar this replaced */
   #tunnel-thermometer {
     position: absolute; z-index: 2;
-    right: 14px; top: 50%; transform: translateY(-50%);
+    right: 14px; top: calc(var(--tunnel-pip-height) + 20px);
     display: flex; flex-direction: column; align-items: center; gap: 6px;
   }
   #thermo-value {
@@ -1049,7 +1020,7 @@
   <div id="tunnel-center">
     <img id="tunnel-pickaxe" src="./pickaxe.png" alt="Pickaxe">
     <div id="tunnel-depth-label">Depth below surface</div>
-    <div id="tunnel-depth-km" class="shake-text">0<span id="tunnel-depth-unit"> km</span></div>
+    <div id="tunnel-depth-km">0<span id="tunnel-depth-unit"> km</span></div>
     <div id="tunnel-radius-readout">6,371 km from Earth's centre</div>
   </div>
   <div id="tunnel-thermometer">
@@ -2254,7 +2225,12 @@
       const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), globeCutDistance);
       globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
     }
-    if (globeComposer) {
+    // the bloom composer's final pass always writes opaque alpha=1, which
+    // paints a solid black box behind the sphere — fine full-screen (the
+    // panel has its own opaque background there) but wrong in pip-mode,
+    // where the panel is meant to be transparent over the tunnel view.
+    // Skip bloom there and render directly so transparency is preserved.
+    if (globeComposer && !globeViewEl.classList.contains('pip-mode')) {
       globeComposer.render();
     } else {
       globeRenderer.render(globeScene, globeCamera);
@@ -2982,10 +2958,6 @@
     const diff = tunnelState.targetDepth - tunnelState.currentDepth;
     const isFast = diff > 200; // fast-forwarding if more than 200km behind target
     const speed = isFast ? TUNNEL_SPEED_KM_S * 300 : TUNNEL_SPEED_KM_S;
-
-    const depthKmEl = document.getElementById('tunnel-depth-km');
-    if (isFast) depthKmEl.classList.add('fast-shake-text');
-    else depthKmEl.classList.remove('fast-shake-text');
 
     const target = tunnelState.targetDepth;
     if (tunnelState.currentDepth < target) {
