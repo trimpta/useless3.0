@@ -254,7 +254,7 @@
   }
   #distance-readout .value { font-size: 22px; font-weight: 700; color: #222; }
   #distance-readout .value span { font-size: 13px; font-weight: 500; color: #888; }
-  #clear-route {
+  .clear-route-btn {
     border: none;
     background: #f1f3f4;
     color: #444;
@@ -264,6 +264,124 @@
     border-radius: 20px;
     cursor: pointer;
   }
+
+  /* ---------- "dig view" prompt: shown instead of the normal distance
+     readout when a destination's chord dips more than 45deg below the
+     local horizon — too steep for a flat map line to represent ---------- */
+  #dig-prompt { display: none; }
+  #dig-prompt.show { display: block; }
+  .dig-note { font-size: 12px; color: #888; margin-top: 10px; line-height: 1.4; }
+  #dig-readout {
+    display: flex;
+    gap: 18px;
+    margin-top: 12px;
+  }
+  .dig-stat { display: flex; flex-direction: column; }
+  .dig-label { font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.04em; }
+  .dig-value { font-size: 16px; font-weight: 700; color: #222; margin-top: 2px; }
+  .dig-actions { display: flex; gap: 8px; margin-top: 14px; }
+  #start-dig-btn {
+    flex: 1;
+    border: none;
+    background: #EA4335;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 14px;
+    border-radius: 20px;
+    cursor: pointer;
+  }
+
+  /* ---------- dig view: full-screen AR-style camera + direction arrow ---------- */
+  #dig-view {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: #000;
+  }
+  #dig-view.show { display: block; }
+  #dig-camera {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  #dig-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+  }
+  #dig-close-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  #dig-arrow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    transition: transform 0.1s linear, filter 0.2s ease;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6));
+  }
+  #dig-arrow.locked svg polygon { fill: #34A853; }
+  #dig-status {
+    position: absolute;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #fff;
+    font-size: 13px;
+    background: rgba(0,0,0,0.45);
+    padding: 8px 16px;
+    border-radius: 16px;
+    text-align: center;
+    max-width: 80%;
+  }
+  #dig-readout-live {
+    position: absolute;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    color: #fff;
+    text-align: center;
+  }
+  #dig-readout-live span:first-child { font-weight: 700; font-size: 15px; }
+  #dig-readout-live span:last-child { font-size: 12px; opacity: 0.8; }
+  #dig-permission-btn {
+    position: absolute;
+    left: 50%;
+    bottom: 90px;
+    transform: translateX(-50%);
+    display: none;
+    border: none;
+    background: #4285F4;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    padding: 12px 22px;
+    border-radius: 24px;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  #dig-permission-btn.show { display: block; }
 
   .leaflet-control-attribution { font-size: 9px !important; }
   .leaflet-tile { transition: opacity 0.15s; }
@@ -355,8 +473,43 @@
     </div>
     <div id="distance-readout">
       <div class="value" id="distance-value">— <span>km, straight-line</span></div>
-      <button id="clear-route">CLEAR</button>
+      <button class="clear-route-btn">CLEAR</button>
     </div>
+
+    <!-- shown instead of distance-readout when the destination is far
+         enough that a straight chord dips more than 45° below the local
+         horizon — at that point a flat 2D line stops being a meaningful
+         way to show "which direction to go" -->
+    <div id="dig-prompt">
+      <div class="dig-note">This one's on the far side of the globe — the straight line runs through the Earth, not over its surface.</div>
+      <div id="dig-readout">
+        <div class="dig-stat"><span class="dig-label">Distance</span><span class="dig-value" id="dig-distance">—</span></div>
+        <div class="dig-stat"><span class="dig-label">Bearing</span><span class="dig-value" id="dig-bearing">—</span></div>
+        <div class="dig-stat"><span class="dig-label">Dig angle</span><span class="dig-value" id="dig-angle">—</span></div>
+      </div>
+      <div class="dig-actions">
+        <button id="start-dig-btn">START DIG VIEW</button>
+        <button class="clear-route-btn">CLEAR</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="dig-view">
+  <video id="dig-camera" autoplay playsinline muted></video>
+  <div id="dig-overlay">
+    <button id="dig-close-btn" title="Close dig view">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+    </button>
+    <div id="dig-arrow">
+      <svg viewBox="0 0 40 40" width="72" height="72"><polygon points="20,3 34,26 20,20 6,26" fill="#EA4335" stroke="#fff" stroke-width="1.5"/></svg>
+    </div>
+    <div id="dig-status">Point your phone forward, then tilt it to aim the arrow</div>
+    <div id="dig-readout-live">
+      <span id="dig-live-dest">—</span>
+      <span id="dig-live-distance">—</span>
+    </div>
+    <button id="dig-permission-btn">Enable camera &amp; compass</button>
   </div>
 </div>
 
@@ -619,6 +772,32 @@
     return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
   }
 
+  // ---------- "dig view" geometry ----------
+  // A straight chord between any two points on a sphere dips below the
+  // local horizon at O by exactly half the great-circle angular
+  // separation between O and D (isoceles triangle O-D-center: base
+  // angles are (180-θ)/2, so the chord's angle below horizontal is θ/2).
+  // At θ=180° (antipodal) that's -90°, straight down. We treat -45°
+  // (θ=90°, a quarter of Earth's circumference, ~10,007km) as the point
+  // where a flat map line stops meaningfully representing the direction.
+  const EARTH_RADIUS_KM = 6371;
+  const DIG_THRESHOLD_KM = EARTH_RADIUS_KM * Math.PI / 2; // ~10,007 km
+  function digAngleDeg(distKm) {
+    const centralAngleDeg = (distKm / EARTH_RADIUS_KM) * (180 / Math.PI);
+    return centralAngleDeg / 2; // degrees below horizon
+  }
+  function bearingDeg(a, b) {
+    const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+    const phi1 = toRad(a.lat), phi2 = toRad(b.lat), dLng = toRad(b.lng - a.lng);
+    const y = Math.sin(dLng) * Math.cos(phi2);
+    const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLng);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+  function compassLabel(deg) {
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(deg / 22.5) % 16];
+  }
+
   // real reverse geocode via Nominatim; falls back to raw coordinates on failure
   async function reverseGeocode(latlng) {
     try {
@@ -694,37 +873,57 @@
     if (destMarker) map.removeLayer(destMarker);
     destMarker = L.marker([destination.lat, destination.lng], { icon: destIcon }).addTo(map);
 
-    if (routeLine) map.removeLayer(routeLine);
-    const routeCoords = [[origin.lat, origin.lng], [destination.lat, destination.lng]];
-    const haloLine = L.polyline(routeCoords, { color: '#fff', weight: 7, opacity: 0.85 });
-    const dashLine = L.polyline(routeCoords, { color: '#4285F4', weight: 4, dashArray: '1 10', lineCap: 'round', opacity: 1 });
-    routeLine = L.featureGroup([haloLine, dashLine]).addTo(map);
-
     const dist = haversineKm(origin, destination);
     const distText = formatDistance(dist);
     document.getElementById('dest-name').textContent = destination.name;
-    document.getElementById('distance-value').innerHTML = `${distText} <span>straight-line</span>`;
 
-    // distance badge sitting on the line itself, at its midpoint
-    if (distanceLabelMarker) map.removeLayer(distanceLabelMarker);
-    const midLatLng = [(origin.lat + destination.lat) / 2, (origin.lng + destination.lng) / 2];
-    distanceLabelMarker = L.marker(midLatLng, {
-      icon: L.divIcon({
-        className: '',
-        html: `<div class="line-distance-label">${distText}</div>`,
-        iconSize: [0, 0]
-      }),
-      interactive: false
-    }).addTo(map);
+    const digMode = dist > DIG_THRESHOLD_KM;
+    document.getElementById('distance-readout').style.display = digMode ? 'none' : 'flex';
+    document.getElementById('dig-prompt').classList.toggle('show', digMode);
 
-    // the route card fades/slides up from the bottom OVER the plain card
-    document.getElementById('card-route').classList.add('show');
-    syncBottomCardHeight();
+    if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+    if (distanceLabelMarker) { map.removeLayer(distanceLabelMarker); distanceLabelMarker = null; }
 
-    flyToBoundsEased(routeLine.getBounds(), {
-      paddingTopLeft: [40, 80],
-      paddingBottomRight: [40, 220]
-    });
+    if (digMode) {
+      // the straight line here runs through the Earth — not meaningful to
+      // draw as a flat line on the 2D map, so we don't. Bearing + dig
+      // angle go in the card instead, with an AR view to actually aim.
+      const bearing = bearingDeg(origin, destination);
+      const angle = digAngleDeg(dist);
+      document.getElementById('dig-distance').textContent = distText;
+      document.getElementById('dig-bearing').textContent = `${Math.round(bearing)}° ${compassLabel(bearing)}`;
+      document.getElementById('dig-angle').textContent = `${angle.toFixed(1)}° below horizon`;
+      document.getElementById('card-route').classList.add('show');
+      syncBottomCardHeight();
+      map.flyTo([origin.lat, origin.lng], map.getZoom(), { duration: 0.5 });
+    } else {
+      const routeCoords = [[origin.lat, origin.lng], [destination.lat, destination.lng]];
+      const haloLine = L.polyline(routeCoords, { color: '#fff', weight: 7, opacity: 0.85 });
+      const dashLine = L.polyline(routeCoords, { color: '#4285F4', weight: 4, dashArray: '1 10', lineCap: 'round', opacity: 1 });
+      routeLine = L.featureGroup([haloLine, dashLine]).addTo(map);
+
+      document.getElementById('distance-value').innerHTML = `${distText} <span>straight-line</span>`;
+
+      // distance badge sitting on the line itself, at its midpoint
+      const midLatLng = [(origin.lat + destination.lat) / 2, (origin.lng + destination.lng) / 2];
+      distanceLabelMarker = L.marker(midLatLng, {
+        icon: L.divIcon({
+          className: '',
+          html: `<div class="line-distance-label">${distText}</div>`,
+          iconSize: [0, 0]
+        }),
+        interactive: false
+      }).addTo(map);
+
+      // the route card fades/slides up from the bottom OVER the plain card
+      document.getElementById('card-route').classList.add('show');
+      syncBottomCardHeight();
+
+      flyToBoundsEased(routeLine.getBounds(), {
+        paddingTopLeft: [40, 80],
+        paddingBottomRight: [40, 220]
+      });
+    }
   }
 
   function clearDestination() {
@@ -733,12 +932,14 @@
     if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
     if (distanceLabelMarker) { map.removeLayer(distanceLabelMarker); distanceLabelMarker = null; }
     document.getElementById('card-route').classList.remove('show');
+    document.getElementById('dig-prompt').classList.remove('show');
+    document.getElementById('distance-readout').style.display = '';
     syncBottomCardHeight();
     input.value = '';
     clearBtn.classList.remove('show');
   }
 
-  document.getElementById('clear-route').addEventListener('click', clearDestination);
+  document.querySelectorAll('.clear-route-btn').forEach(btn => btn.addEventListener('click', clearDestination));
 
   // ---------- geolocation for point A (falls back to mock origin) ----------
   setOriginMarker();
@@ -970,6 +1171,123 @@
   // any pan or zoom (wheel, double-click, pinch, +/- buttons) kills a pending long-press
   map.on('movestart zoomstart', cancelPress);
   mapEl.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // =========================================================
+  // Dig view — AR-style camera overlay with a direction arrow for
+  // destinations far enough that the straight-line chord runs through
+  // the Earth (see DIG_THRESHOLD_KM / digAngleDeg above).
+  //
+  // Heading/pitch from DeviceOrientationEvent are inherently approximate
+  // and vary by device/browser (screen-orientation handling especially),
+  // so the arrow math here is a reasonable first pass, not a calibrated
+  // AR SDK — expect to tune the constants below against a real phone.
+  // =========================================================
+  const digViewEl = document.getElementById('dig-view');
+  const digCameraEl = document.getElementById('dig-camera');
+  const digArrowEl = document.getElementById('dig-arrow');
+  const digStatusEl = document.getElementById('dig-status');
+  const digPermissionBtn = document.getElementById('dig-permission-btn');
+  let digStream = null;
+  let digOrientationHandler = null;
+  let digTargetBearing = 0;
+  let digTargetElevation = 0; // negative = below horizon
+
+  function normalizeAngleDelta(deg) {
+    return ((deg + 540) % 360) - 180; // shortest signed difference, -180..180
+  }
+
+  function currentHeadingFrom(event) {
+    if (typeof event.webkitCompassHeading === 'number') return event.webkitCompassHeading;
+    if (typeof event.alpha === 'number') return (360 - event.alpha) % 360; // best-effort on non-iOS
+    return null;
+  }
+
+  function onDigOrientation(event) {
+    const heading = currentHeadingFrom(event);
+    if (heading === null || typeof event.beta !== 'number') return;
+
+    // holding the phone upright (beta≈90) points the back camera at the
+    // horizon; tipping it forward/down decreases beta and should aim lower
+    const currentElevation = event.beta - 90;
+
+    const headingDelta = normalizeAngleDelta(digTargetBearing - heading);
+    const elevationDelta = digTargetElevation - currentElevation;
+
+    const FOV = 50; // degrees of device rotation mapped across the full screen width/height
+    const x = Math.max(-1, Math.min(1, headingDelta / FOV));
+    const y = Math.max(-1, Math.min(1, -elevationDelta / FOV));
+
+    const w = digViewEl.clientWidth, h = digViewEl.clientHeight;
+    const px = w / 2 + x * (w / 2) * 0.85;
+    const py = h / 2 + y * (h / 2) * 0.85;
+    const rotation = Math.atan2(y, x) * 180 / Math.PI + 90; // arrow art points "up" by default
+
+    digArrowEl.style.left = px + 'px';
+    digArrowEl.style.top = py + 'px';
+    digArrowEl.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
+
+    const locked = Math.abs(headingDelta) < 6 && Math.abs(elevationDelta) < 6;
+    digArrowEl.classList.toggle('locked', locked);
+    digStatusEl.textContent = locked
+      ? 'Aimed — this is the dig direction'
+      : 'Turn and tilt your phone to follow the arrow';
+  }
+
+  async function openDigView() {
+    if (!destination) return;
+    digTargetBearing = bearingDeg(origin, destination);
+    digTargetElevation = -digAngleDeg(haversineKm(origin, destination));
+    document.getElementById('dig-live-dest').textContent = destination.name;
+    document.getElementById('dig-live-distance').textContent =
+      `${formatDistance(haversineKm(origin, destination))} · ${Math.round(digTargetBearing)}° ${compassLabel(digTargetBearing)} · ${(-digTargetElevation).toFixed(1)}° below horizon`;
+
+    digViewEl.classList.add('show');
+
+    try {
+      digStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      digCameraEl.srcObject = digStream;
+    } catch (err) {
+      digStatusEl.textContent = 'Camera access denied — showing arrow only';
+    }
+
+    // iOS requires this to be requested from a user gesture — openDigView
+    // is only ever called directly from the button's click handler
+    const DOE = window.DeviceOrientationEvent;
+    if (DOE && typeof DOE.requestPermission === 'function') {
+      try {
+        const result = await DOE.requestPermission();
+        if (result !== 'granted') {
+          digPermissionBtn.classList.add('show');
+          return;
+        }
+      } catch (err) {
+        digPermissionBtn.classList.add('show');
+        return;
+      }
+    }
+    startDigOrientation();
+  }
+
+  function startDigOrientation() {
+    digPermissionBtn.classList.remove('show');
+    digOrientationHandler = onDigOrientation;
+    const eventName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+    window.addEventListener(eventName, digOrientationHandler);
+  }
+
+  function closeDigView() {
+    digViewEl.classList.remove('show');
+    if (digStream) { digStream.getTracks().forEach(t => t.stop()); digStream = null; }
+    if (digOrientationHandler) {
+      window.removeEventListener('deviceorientationabsolute', digOrientationHandler);
+      window.removeEventListener('deviceorientation', digOrientationHandler);
+      digOrientationHandler = null;
+    }
+  }
+
+  document.getElementById('start-dig-btn').addEventListener('click', openDigView);
+  document.getElementById('dig-close-btn').addEventListener('click', closeDigView);
+  digPermissionBtn.addEventListener('click', startDigOrientation);
 </script>
 
 </body>
