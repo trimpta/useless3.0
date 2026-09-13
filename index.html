@@ -1721,6 +1721,8 @@
   const globeCanvasEl = document.getElementById('globe-canvas');
   let globeScene = null, globeCamera = null, globeRenderer = null, globeGroup = null;
   let globeComposer = null, globeClippingPlane = null;
+  let globeCutFaceGroup = null;
+  let globeCutNormal = new THREE.Vector3(0, 0, 1);
   let globeRouteObjects = [];
   let globeAnimating = false;
   let globeDragging = false;
@@ -1756,8 +1758,11 @@
     globeScene.add(globeGroup);
     globeGroup.scale.setScalar(0.85);
 
-    // The clipping plane keeps the +Z side of the globe (set per-route in drawGlobeRoute)
-    globeClippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    globeCutFaceGroup = new THREE.Group();
+    globeGroup.add(globeCutFaceGroup);
+
+    // The clipping plane keeps the -Z side of the globe (set per-route in drawGlobeRoute)
+    globeClippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
 
     // Satellite texture for the outer crust
     const texLoader = new THREE.TextureLoader();
@@ -1783,23 +1788,24 @@
             roughness: 0.85, side: THREE.FrontSide,
             clippingPlanes: [globeClippingPlane]
           });
-      globeGroup.add(new THREE.Mesh(new THREE.SphereGeometry(r, 64, 40), shellMat));
+      const shellMesh = new THREE.Mesh(new THREE.SphereGeometry(r, 64, 40), shellMat);
+      if (i === 0) shellMesh.rotation.y = -Math.PI / 2; // align prime meridian with +X
+      globeGroup.add(shellMesh);
 
       // --- Flat disc cap on the cross-section face ---
-      // We use a unit-radius CircleGeometry and scale it in drawGlobeRoute
-      // to sqrt(R^2 - d^2) where d is the plane offset from the Earth's centre.
+      // We use a dummy Mesh here, we will rebuild it as RingGeometry in drawGlobeRoute
       const capMat = new THREE.MeshStandardMaterial({
         color: LAYER_FILL[i], emissive: LAYER_EMISSIVE[i],
         emissiveIntensity: i === 0 ? 0.0 : 0.7,
         roughness: 0.6, side: THREE.DoubleSide
         // no clipping — the disc always fills the cut face
       });
-      const capMesh = new THREE.Mesh(new THREE.CircleGeometry(1, 64), capMat);
+      const capMesh = new THREE.Mesh(new THREE.BufferGeometry(), capMat);
       capMesh.userData.isCap = true;
       capMesh.userData.layerRadius = r;
       capMesh.userData.layerIndex = i; // 0=crust, 1=mantle, 2=outer core, 3=inner core
       capMesh.visible = false;
-      globeGroup.add(capMesh);
+      globeCutFaceGroup.add(capMesh);
     });
 
     // Subtle atmosphere glow (no clipping — full sphere)
@@ -1854,30 +1860,29 @@
     if (d < 0) { worldNormal.negate(); d = -d; }
 
     // ----------------------------------------------------------------
-    // Orient globeGroup so that worldNormal → local +Z
-    // After this rotation, the cutting plane is at local z = d
+    // Orient globeCutFaceGroup so that worldNormal -> local +Z
     // ----------------------------------------------------------------
     const zAxis = new THREE.Vector3(0, 0, 1);
     const dot = worldNormal.dot(zAxis);
     if (dot > 0.9999) {
-      globeGroup.quaternion.identity();
+      globeCutFaceGroup.quaternion.identity();
     } else if (dot < -0.9999) {
-      globeGroup.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+      globeCutFaceGroup.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
     } else {
-      globeGroup.quaternion.setFromUnitVectors(zAxis, worldNormal);
+      globeCutFaceGroup.quaternion.setFromUnitVectors(zAxis, worldNormal);
     }
-    // Tilt ~35° so you see both the round satellite side and the flat cross-section
-    globeGroup.rotateX(0.38);
-    globeGroup.rotateY(-0.38);
+
+    // Auto-spin the globe around the Y axis so the cut face is pointing generally towards the camera (+Z)
+    const angleToCamera = Math.atan2(worldNormal.x, worldNormal.z);
+    globeGroup.rotation.set(0, angleToCamera, 0);
+    globeGroup.updateMatrixWorld();
 
     // ----------------------------------------------------------------
-    // Update clipping plane: keep local z <= d (the larger hemisphere)
-    // THREE.Plane clips fragments where dot(p, n) + constant < 0
-    // We want: z - d > 0 to be CLIPPED => -z + d < 0 => n=(0,0,-1), constant=d
+    // Update clipping plane: keep local side opposite to worldNormal
     // ----------------------------------------------------------------
+    globeCutNormal.copy(worldNormal);
     globeCutDistance = d;
-    globeGroup.updateMatrixWorld();
-    const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), d);
+    const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), d);
     globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
 
     // ----------------------------------------------------------------
@@ -1886,19 +1891,34 @@
     // (at distance d from centre) as a circle of radius √(R²-d²).
     // Discs sit at local position (0, 0, d), in the local XY plane.
     // ----------------------------------------------------------------
-    globeGroup.traverse(child => {
+    globeCutFaceGroup.traverse(child => {
       if (!child.userData.isCap) return;
-      const R = child.userData.layerRadius;
-      const disc = R * R - d * d;
-      if (disc <= 0) {
-        child.visible = false; // plane misses this layer entirely
+      const R_outer = child.userData.layerRadius;
+      // Get the inner radius from the next layer, or 0 for the inner core
+      const nextLayer = EARTH_LAYERS[child.userData.layerIndex + 1];
+      const R_inner = nextLayer ? (nextLayer.outerRadius / EARTH_RADIUS_KM) : 0;
+      
+      const discOuterSq = R_outer * R_outer - d * d;
+      const discInnerSq = Math.max(0, R_inner * R_inner - d * d);
+      
+      if (discOuterSq <= 0) {
+        child.visible = false;
       } else {
-        const r = Math.sqrt(disc);
-        // Offset inner layers slightly in +Z to prevent z-fighting and ensure they render on top
-        const zOffset = d + child.userData.layerIndex * 0.001;
-        child.position.set(0, 0, zOffset);
-        child.scale.set(r, r, 1);     // scale the unit circle to the correct radius
-        child.quaternion.identity();   // stays flat in the local XY plane (facing +Z)
+        const r_outer = Math.sqrt(discOuterSq);
+        const r_inner = Math.sqrt(discInnerSq);
+        
+        // Rebuild geometry as a perfectly coplanar RingGeometry
+        // This avoids overlapping meshes and Z-fighting completely.
+        child.geometry.dispose();
+        if (r_inner > 0) {
+          child.geometry = new THREE.RingGeometry(r_inner, r_outer, 64);
+        } else {
+          child.geometry = new THREE.CircleGeometry(r_outer, 64);
+        }
+        
+        child.position.set(0, 0, d); // all caps exactly on the plane
+        child.scale.set(1, 1, 1);
+        child.quaternion.identity();
         child.visible = true;
       }
     });
@@ -1954,7 +1974,7 @@
       globeVelocity.x *= 0.92;
       
       globeGroup.updateMatrixWorld();
-      const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), globeCutDistance);
+      const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), globeCutDistance);
       globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
     }
     if (globeComposer) {
@@ -2043,7 +2063,7 @@
     globeGroup.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), globeVelocity.x);
     
     globeGroup.updateMatrixWorld();
-    const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), globeCutDistance);
+    const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), globeCutDistance);
     globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
   });
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
@@ -2206,11 +2226,14 @@
   document.getElementById('start-dig-btn').addEventListener('click', openGlobeView);
   document.getElementById('globe-dig-btn').addEventListener('click', () => {
     closeGlobeView();
-    openTunnelSimulation(origin, destination);
+    openDigView();
   });
   document.getElementById('dig-close-btn').addEventListener('click', closeDigView);
   digPermissionBtn.addEventListener('click', startDigOrientation);
-  digProceedBtn.addEventListener('click', () => digFakeEnvEl.classList.add('show'));
+  digProceedBtn.addEventListener('click', () => {
+    closeDigView();
+    openTunnelSimulation(origin, destination);
+  });
   document.getElementById('dig-fake-env-back').addEventListener('click', () => digFakeEnvEl.classList.remove('show'));
 
   /* =========================================================
