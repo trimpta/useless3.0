@@ -669,6 +669,47 @@
     85%  { opacity: 0.5; }
     100% { opacity: 0; transform: translateY(110vh) scale(1.2); }
   }
+  
+  #tunnel-view {
+    cursor: url('./pickaxe.png') 16 16, auto;
+  }
+
+  #tunnel-pickaxe {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 10px auto;
+    display: block;
+    animation: mineSwing 0.4s infinite alternate ease-in-out;
+  }
+  @keyframes mineSwing {
+    0% { transform: translateY(0) rotate(0deg); }
+    100% { transform: translateY(12px) rotate(-20deg); }
+  }
+
+  .shake-text {
+    display: inline-block;
+    animation: rumble 0.1s infinite;
+  }
+  .fast-shake-text {
+    display: inline-block;
+    animation: rumble 0.05s infinite;
+  }
+  @keyframes rumble {
+    0% { transform: translate(1px, 1px) rotate(0deg); }
+    25% { transform: translate(-1px, -2px) rotate(-1deg); }
+    50% { transform: translate(-2px, 0px) rotate(1deg); }
+    75% { transform: translate(2px, 2px) rotate(0deg); }
+    100% { transform: translate(1px, -1px) rotate(-1deg); }
+  }
+
+  .scrolling-bg {
+    background-size: 400px 400px, 100% 100% !important;
+    animation: crustScroll 6s linear infinite;
+  }
+  @keyframes crustScroll {
+    from { background-position: 0 0, 0 0; }
+    to { background-position: 0 -400px, 0 0; }
+  }
 
   /* Top bar */
   #tunnel-top-bar {
@@ -860,16 +901,7 @@
         <div id="globe-subtitle">Straight-line tunnel through the Earth</div>
       </div>
       <button id="globe-dig-btn">
-        <!-- Minecraft-style pickaxe — flat stroke icon, white, matches app icon language -->
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-             stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-             aria-hidden="true">
-          <!-- handle: lower-left to upper-right -->
-          <line x1="3" y1="21" x2="15" y2="9"/>
-          <!-- pick head: a diamond/arrow shape at the top-right -->
-          <path d="M15 9 L20 4 L20 9 L15 9 Z"/>
-          <path d="M20 4 L15 4 L15 9"/>
-        </svg>
+        <img src="./pickaxe.png" style="width:18px; height:18px;" alt="Pickaxe">
         <span>DIG</span>
       </button>
     </div>
@@ -923,8 +955,9 @@
     <div style="width:40px"></div>
   </div>
   <div id="tunnel-center">
+    <img id="tunnel-pickaxe" src="./pickaxe.png" alt="Pickaxe">
     <div id="tunnel-depth-label">Depth below surface</div>
-    <div id="tunnel-depth-km">0<span id="tunnel-depth-unit"> km</span></div>
+    <div id="tunnel-depth-km" class="shake-text">0<span id="tunnel-depth-unit"> km</span></div>
     <div id="tunnel-radius-readout">6,371 km from Earth's centre</div>
   </div>
   <div id="tunnel-bottom-card">
@@ -2184,7 +2217,7 @@
      Tunnel Layer Simulation
      ========================================================= */
   const TUNNEL_LAYERS_DEF = [
-    { name: 'Crust',       emoji: '🪨', bg: 'linear-gradient(180deg,#3a5a2a 0%,#2d4a22 35%,#7a5c1a 70%,#5a3e10 100%)', particle: '#b8a070' },
+    { name: 'Crust',       emoji: '🪨', bg: 'url(https://www.transparenttextures.com/patterns/dark-matter.png), linear-gradient(180deg,#3a5a2a 0%,#2d4a22 35%,#7a5c1a 70%,#5a3e10 100%)', particle: '#b8a070', cssClass: 'scrolling-bg' },
     { name: 'Mantle',      emoji: '🔥', bg: 'linear-gradient(180deg,#8b3a00 0%,#cc5500 35%,#ff8c00 70%,#c44a00 100%)', particle: '#ff8844' },
     { name: 'Outer core',  emoji: '🌊', bg: 'linear-gradient(180deg,#8b0000 0%,#cc0000 35%,#ff2200 70%,#990000 100%)', particle: '#ff6644' },
     { name: 'Inner core',  emoji: '⚡', bg: 'linear-gradient(180deg,#997700 0%,#ccaa00 35%,#ffdd00 70%,#ff9900 100%)', particle: '#ffee66' },
@@ -2299,6 +2332,9 @@
     ) || TUNNEL_LAYERS_DEF[0];
 
     tunnelBgEl.style.background = layerDef.bg;
+    if (layerDef.cssClass) tunnelBgEl.classList.add(layerDef.cssClass);
+    else tunnelBgEl.className = '';
+    
     tunnelBadgeEl.textContent = layerDef.emoji + ' ' + crossing.name;
     setParticleColor(layerDef.particle);
 
@@ -2331,9 +2367,17 @@
     const dt = Math.min(((ts || performance.now()) - tunnelLastTs) / 1000, 0.1);
     tunnelLastTs = ts || performance.now();
 
+    const diff = tunnelState.targetDepth - tunnelState.currentDepth;
+    const isFast = diff > 200; // fast-forwarding if more than 200km behind target
+    const speed = isFast ? TUNNEL_SPEED_KM_S * 20 : TUNNEL_SPEED_KM_S;
+
+    const depthKmEl = document.getElementById('tunnel-depth-km');
+    if (isFast) depthKmEl.classList.add('fast-shake-text');
+    else depthKmEl.classList.remove('fast-shake-text');
+
     const target = tunnelState.targetDepth;
     if (tunnelState.currentDepth < target) {
-      tunnelState.currentDepth = Math.min(tunnelState.currentDepth + TUNNEL_SPEED_KM_S * dt, target);
+      tunnelState.currentDepth = Math.min(tunnelState.currentDepth + speed * dt, target);
     }
 
     const depthKm = tunnelState.currentDepth;
