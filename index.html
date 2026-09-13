@@ -8,7 +8,11 @@
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Roboto, sans-serif; }
-  #map { height: 100%; width: 100%; background: #cfe3ec; }
+  /* neutral placeholder for the very first paint before any tile has ever
+     loaded (once tiles exist, the previous zoom level's tiles are what
+     shows through gaps during flyTo — see the tile-layer keepBuffer/
+     flyToBounds comments below) */
+  #map { height: 100%; width: 100%; background: #6b7264; }
 
   /* panes that fade out while the map is panning/zooming, back in on release */
   #top-bar, #bottom-card {
@@ -150,14 +154,29 @@
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -2px 10px rgba(0,0,0,0.25);
     overflow: hidden;
+    max-height: 70vh;
+    /* height is set explicitly in JS to whichever card (plain/route) is
+       showing, since they're different heights and #card-route used to be
+       forced to #card-plain's (shorter) height via inset:0 — clipping the
+       destination row off the bottom of the card */
+    transition: height 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
+  }
+  #bottom-card.hide-for-keyboard {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(20px);
   }
   #card-plain, #card-route {
     background: #fff;
-    padding: 14px 18px 18px;
+    padding: 14px 18px calc(18px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    max-height: 70vh;
   }
   #card-route {
     position: absolute;
-    inset: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     transform: translateY(100%);
     opacity: 0;
     transition: transform 0.3s ease, opacity 0.3s ease;
@@ -355,6 +374,14 @@
     const dLng = radiusKm / (111.32 * Math.cos(center.lat * Math.PI / 180));
     const xs = [lon2tileX(center.lng - dLng, zoom), lon2tileX(center.lng + dLng, zoom)];
     const ys = [lat2tileY(center.lat - dLat, zoom), lat2tileY(center.lat + dLat, zoom)];
+    return tilesForXYRange(xs, ys, zoom);
+  }
+  function tilesForBounds(bounds, zoom) {
+    const xs = [lon2tileX(bounds.getWest(), zoom), lon2tileX(bounds.getEast(), zoom)];
+    const ys = [lat2tileY(bounds.getNorth(), zoom), lat2tileY(bounds.getSouth(), zoom)];
+    return tilesForXYRange(xs, ys, zoom);
+  }
+  function tilesForXYRange(xs, ys, zoom) {
     const tiles = [];
     for (let x = Math.min(...xs); x <= Math.max(...xs); x++) {
       for (let y = Math.min(...ys); y <= Math.max(...ys); y++) {
@@ -363,13 +390,8 @@
     }
     return tiles;
   }
-  async function warmTileCache(center, radiusKm, zooms) {
-    const urls = [];
-    for (const z of zooms) {
-      for (const t of tilesForRadius(center, radiusKm, z)) {
-        urls.push(TILE_URL.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x));
-      }
-    }
+  async function fetchTilesConcurrent(tiles) {
+    const urls = tiles.map(t => TILE_URL.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x));
     let i = 0;
     async function worker() {
       while (i < urls.length) {
@@ -379,62 +401,73 @@
     }
     await Promise.all(Array.from({ length: 6 }, worker)); // small concurrency pool
   }
+  async function warmTileCache(center, radiusKm, zooms) {
+    const tiles = zooms.flatMap(z => tilesForRadius(center, radiusKm, z));
+    await fetchTilesConcurrent(tiles);
+  }
+
+  // ---------- prefetch tiles for a candidate route before the user taps it ----------
+  // triggered as soon as a search suggestion renders (or is hovered), so
+  // by the time the user actually selects a destination, the tiles the
+  // fly-to animation is about to need are already cached — no more
+  // popping in / jiggling mid-flight
+  let lastRoutePrefetchKey = null;
+  function prefetchRouteTiles(a, b) {
+    const key = `${a.lat},${a.lng}|${b.lat},${b.lng}`;
+    if (key === lastRoutePrefetchKey) return;
+    lastRoutePrefetchKey = key;
+
+    const bounds = L.latLngBounds([a.lat, a.lng], [b.lat, b.lng]);
+    const target = map._getBoundsCenterZoom(bounds, {
+      paddingTopLeft: L.point([40, 80]),
+      paddingBottomRight: L.point([40, 220])
+    });
+    // cover every integer zoom level the fly-to animation will pass
+    // through, not just the final resting zoom
+    const zLow = Math.max(1, Math.floor(Math.min(map.getZoom(), target.zoom)));
+    const zHigh = Math.min(17, Math.ceil(Math.max(map.getZoom(), target.zoom))); // cap at maxNativeZoom
+    const tiles = [];
+    for (let z = zLow; z <= zHigh; z++) tiles.push(...tilesForBounds(bounds, z));
+    fetchTilesConcurrent(tiles);
+  }
 
   // ---------- fade top/bottom panes out while the map is moving (pan OR zoom),
   // back in once it settles ----------
   const topBarEl = document.getElementById('top-bar');
   const bottomCardEl = document.getElementById('bottom-card');
-  // set while the custom eased fly-to (below) is driving the view itself,
-  // so its many synthetic movestart/moveend ticks don't flicker the fade
-  let suppressMoveFade = false;
   map.on('movestart', () => {
-    if (suppressMoveFade) return;
     topBarEl.classList.add('dimmed');
     bottomCardEl.classList.add('dimmed');
   });
   map.on('moveend', () => {
-    if (suppressMoveFade) return;
     topBarEl.classList.remove('dimmed');
     bottomCardEl.classList.remove('dimmed');
   });
 
-  // ---------- eased pan+zoom-to-bounds with a true ease-in-out cubic curve
-  // (Leaflet's own flyTo only exposes a single "linearity" knob, not a real
-  // ease-in-out) ----------
-  function easeInOutCubic(t) {
-    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  // #bottom-card's height tracks whichever card (plain/route) is actually
+  // showing, since they're different heights — previously #card-route was
+  // forced to #card-plain's shorter height and got clipped
+  const cardPlainEl = document.getElementById('card-plain');
+  const cardRouteEl = document.getElementById('card-route');
+  function syncBottomCardHeight() {
+    const active = cardRouteEl.classList.contains('show') ? cardRouteEl : cardPlainEl;
+    bottomCardEl.style.height = active.scrollHeight + 'px';
   }
-  function flyToBoundsEased(bounds, { paddingTopLeft = [0, 0], paddingBottomRight = [0, 0], duration = 1000 } = {}) {
-    const target = map._getBoundsCenterZoom(bounds, {
-      paddingTopLeft: L.point(paddingTopLeft),
-      paddingBottomRight: L.point(paddingBottomRight)
-    });
-    const startCenter = map.getCenter();
-    const startZoom = map.getZoom();
-    const endCenter = target.center;
-    const endZoom = target.zoom;
-    const startTime = performance.now();
+  window.addEventListener('resize', syncBottomCardHeight);
 
-    topBarEl.classList.add('dimmed');
-    bottomCardEl.classList.add('dimmed');
-    suppressMoveFade = true;
-
-    function step(now) {
-      const t = Math.min(1, (now - startTime) / duration);
-      const e = easeInOutCubic(t);
-      const lat = startCenter.lat + (endCenter.lat - startCenter.lat) * e;
-      const lng = startCenter.lng + (endCenter.lng - startCenter.lng) * e;
-      const zoom = startZoom + (endZoom - startZoom) * e;
-      map.setView([lat, lng], zoom, { animate: false });
-      if (t < 1) {
-        requestAnimationFrame(step);
-      } else {
-        suppressMoveFade = false;
-        topBarEl.classList.remove('dimmed');
-        bottomCardEl.classList.remove('dimmed');
-      }
-    }
-    requestAnimationFrame(step);
+  // ---------- pan+zoom-to-bounds ----------
+  // This used to be a hand-rolled requestAnimationFrame loop calling
+  // setView(...,{animate:false}) on every frame for a literal cubic
+  // ease-in-out curve. That fought Leaflet's own zoom machinery — every
+  // frame forced a full tile-grid rebuild, which is what caused the
+  // flashing/jiggling. Native flyToBounds avoids that (one clean
+  // animation, tiles reconciled once) and, as a side effect, scales the
+  // previous zoom level's tiles as a placeholder while new ones load —
+  // which is exactly the "blurred current view as backdrop" effect,
+  // built in for free. easeLinearity close to 0 keeps a pronounced
+  // ease-in/ease-out deceleration curve.
+  function flyToBoundsEased(bounds, opts) {
+    map.flyToBounds(bounds, { duration: 1.7, easeLinearity: 0.15, ...opts });
   }
 
   // ---------- markers / route state ----------
@@ -552,12 +585,11 @@
 
     // the route card fades/slides up from the bottom OVER the plain card
     document.getElementById('card-route').classList.add('show');
+    syncBottomCardHeight();
 
-    // eases pan+zoom together along an ease-in-out cubic curve
     flyToBoundsEased(routeLine.getBounds(), {
       paddingTopLeft: [40, 80],
-      paddingBottomRight: [40, 220],
-      duration: 1700
+      paddingBottomRight: [40, 220]
     });
   }
 
@@ -566,6 +598,7 @@
     if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
     if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
     document.getElementById('card-route').classList.remove('show');
+    syncBottomCardHeight();
     input.value = '';
     clearBtn.classList.remove('show');
   }
@@ -574,6 +607,7 @@
 
   // ---------- geolocation for point A (falls back to mock origin) ----------
   setOriginMarker();
+  syncBottomCardHeight();
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
       async pos => {
@@ -603,6 +637,12 @@
   const suggestionsEl = document.getElementById('suggestions');
   const clearBtn = document.getElementById('search-clear');
   const spinnerEl = document.getElementById('search-spinner');
+
+  // hide the bottom panel while the on-screen keyboard is likely up
+  // (search input focused) — otherwise it floats mid-screen above the
+  // keyboard instead of staying pinned to the real bottom edge
+  input.addEventListener('focus', () => bottomCardEl.classList.add('hide-for-keyboard'));
+  input.addEventListener('blur', () => bottomCardEl.classList.remove('hide-for-keyboard'));
 
   const HISTORY_KEY = 'searchHistory';
   const HISTORY_MAX = 8;
@@ -682,6 +722,10 @@
        </div>`;
     }).join('');
     suggestionsEl.classList.add('show');
+
+    // most likely pick — start warming its route tiles right away
+    const [lng, lat] = features[0].geometry.coordinates;
+    prefetchRouteTiles(origin, { lat, lng });
   }
 
   function renderHistory() {
@@ -718,6 +762,14 @@
     input.value = '';
     clearBtn.classList.remove('show');
     suggestionsEl.classList.remove('show');
+  });
+
+  // hovering any row (live result or history) is a strong enough intent
+  // signal to warm that route's tiles too
+  suggestionsEl.addEventListener('mouseover', (e) => {
+    const row = e.target.closest('.suggestion');
+    if (!row || !row.dataset.lat) return;
+    prefetchRouteTiles(origin, { lat: parseFloat(row.dataset.lat), lng: parseFloat(row.dataset.lng) });
   });
 
   document.addEventListener('click', (e) => {
