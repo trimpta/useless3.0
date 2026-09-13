@@ -299,7 +299,7 @@
     position: fixed;
     inset: 0;
     z-index: 1900;
-    background: #0d1117;
+    background: #000;
     flex-direction: column;
   }
   #globe-view.show { display: flex; }
@@ -308,8 +308,24 @@
     width: 100%;
     min-height: 0;
     display: block;
+    position: relative;
     touch-action: none; /* we handle drag-to-rotate ourselves */
     cursor: grab;
+  }
+  /* soft blue aura centred behind the globe sphere */
+  #globe-view::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    bottom: 34%;          /* only covers the canvas two-thirds, not the panel */
+    pointer-events: none;
+    z-index: 0;
+    background: radial-gradient(
+      circle at 50% 46%,
+      rgba(66,133,244,0.22)  0%,
+      rgba(26,54,120,0.12)  38%,
+      transparent           68%
+    );
   }
   #globe-canvas:active { cursor: grabbing; }
   #globe-close-btn {
@@ -343,11 +359,7 @@
     background: #151b24;
     border-top: 1px solid rgba(255,255,255,0.08);
     padding: 16px 18px calc(18px + env(safe-area-inset-bottom));
-    transition: opacity 0.3s ease;
   }
-  /* both fade out while the user is spinning the globe */
-  #globe-view.rotating #globe-info,
-  #globe-view.rotating #globe-hint { opacity: 0; }
 
   #globe-info-head {
     display: flex;
@@ -362,12 +374,15 @@
     border: none;
     background: #EA4335;
     color: #fff;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
     letter-spacing: 0.06em;
-    padding: 11px 26px;
-    border-radius: 22px;
+    padding: 13px 22px;
+    border-radius: 16px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   #globe-warning {
     display: none;
@@ -379,19 +394,44 @@
     color: #ffb4ad;
     font-size: 12px;
     line-height: 1.4;
+    align-items: flex-start;
+    gap: 8px;
   }
-  #globe-warning.show { display: block; }
-  #globe-layers { margin-top: 12px; }
+  #globe-warning.show { display: flex; }
+  /* vertical timeline layer list */
+  #globe-layers {
+    position: relative;
+    margin-top: 16px;
+    padding-left: 26px;   /* room for line + dot */
+  }
+  #globe-layers::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 8px; bottom: 8px;
+    width: 2px;
+    background: linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.30) 0%,
+      rgba(255,255,255,0.07) 100%
+    );
+    border-radius: 1px;
+  }
   .globe-layer-row {
+    position: absolute;
+    left: 0; right: 0;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 7px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding: 0 0 0 26px;
   }
-  .globe-layer-row:last-child { border-bottom: none; }
-  .globe-layer-swatch {
-    width: 10px; height: 10px; border-radius: 50%; flex: none;
+  .globe-layer-dot {
+    position: absolute;
+    left: 4px;          /* sits centred on the 2px line */
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    border: 2px solid rgba(0,0,0,0.55);
+    flex: none;
   }
   .globe-layer-name { color: #e6edf3; font-size: 13px; flex: 1; }
   .globe-layer-depth { color: #8b97a8; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -690,7 +730,19 @@
         <div id="globe-route">—</div>
         <div id="globe-subtitle">Straight-line tunnel through the Earth</div>
       </div>
-      <button id="globe-dig-btn">DIG</button>
+      <button id="globe-dig-btn">
+        <!-- Minecraft-style pickaxe — flat stroke icon, white, matches app icon language -->
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true">
+          <!-- handle: lower-left to upper-right -->
+          <line x1="3" y1="21" x2="15" y2="9"/>
+          <!-- pick head: a diamond/arrow shape at the top-right -->
+          <path d="M15 9 L20 4 L20 9 L15 9 Z"/>
+          <path d="M20 4 L15 4 L15 9"/>
+        </svg>
+        <span>DIG</span>
+      </button>
     </div>
     <div id="globe-warning"></div>
     <div id="globe-layers"></div>
@@ -1484,25 +1536,42 @@
     globeGroup = new THREE.Group();
     globeScene.add(globeGroup);
 
+    // 80% of natural radius — gives breathing room inside the canvas
+    // for the CSS aura gradient to frame the sphere cleanly
+    globeGroup.scale.setScalar(0.8);
+
+    // load the earth-dark basemap (country outlines only, no labels) for the
+    // outer crust shell; inner layers stay as flat-coloured translucent shells
+    const texLoader = new THREE.TextureLoader();
+    const earthTex = texLoader.load(
+      'https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-dark.jpg'
+    );
+
     // nested translucent shells, outermost first, so you can see into the
     // core through the crust/mantle
+    const innerOpacities = [0.22, 0.42, 0.95]; // mantle / outer core / inner core
     EARTH_LAYERS.forEach((layer, i) => {
       const r = layer.outerRadius / EARTH_RADIUS_KM;
-      const opacity = [0.10, 0.22, 0.42, 0.95][i];
-      const shell = new THREE.Mesh(
-        new THREE.SphereGeometry(r, 48, 32),
-        new THREE.MeshBasicMaterial({
-          color: layer.color, transparent: true, opacity,
-          depthWrite: false, side: THREE.DoubleSide
-        })
-      );
-      globeGroup.add(shell);
+      const mat = i === 0
+        ? new THREE.MeshBasicMaterial({
+            map: earthTex,
+            transparent: true,
+            opacity: 0.65,       // enough for map to read; enough transparency to see inner shells
+            depthWrite: false,
+            side: THREE.DoubleSide
+          })
+        : new THREE.MeshBasicMaterial({
+            color: layer.color, transparent: true,
+            opacity: innerOpacities[i - 1],
+            depthWrite: false, side: THREE.DoubleSide
+          });
+      globeGroup.add(new THREE.Mesh(new THREE.SphereGeometry(r, 48, 32), mat));
     });
 
-    // surface grid so the rotation reads clearly
+    // subtle wireframe grid — kept at very low opacity so texture reads first
     globeGroup.add(new THREE.Mesh(
       new THREE.SphereGeometry(1.001, 24, 16),
-      new THREE.MeshBasicMaterial({ color: 0x8ab4f8, wireframe: true, transparent: true, opacity: 0.18, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: 0x8ab4f8, wireframe: true, transparent: true, opacity: 0.08, depthWrite: false })
     ));
   }
 
@@ -1570,27 +1639,49 @@
   function renderLayerList(a, b) {
     const { crossings, deepestDepth } = computeLayerCrossings(a, b);
     const listEl = document.getElementById('globe-layers');
-    listEl.innerHTML = crossings.map(c => `
-      <div class="globe-layer-row">
-        <span class="globe-layer-swatch" style="background:${c.cssColor}"></span>
-        <span class="globe-layer-name">${c.name}</span>
-        <span class="globe-layer-depth">${c.enterAt < 1 ? 'at the surface' : formatDistance(c.enterAt) + ' in'}</span>
-      </div>
-    `).join('') + `
-      <div class="globe-layer-row">
-        <span class="globe-layer-swatch" style="background:#8b97a8"></span>
-        <span class="globe-layer-name">Deepest point below surface</span>
-        <span class="globe-layer-depth">${formatDistance(deepestDepth)}</span>
-      </div>`;
+
+    // build timeline rows with dots proportionally spaced by depth
+    const TIMELINE_H = 200; // px — height of the #globe-layers container
+    listEl.style.minHeight = TIMELINE_H + 'px';
+
+    const rows = [
+      ...crossings.map(c => ({
+        color: c.cssColor,
+        name: c.name,
+        label: c.enterAt < 1 ? 'at the surface' : formatDistance(c.enterAt) + ' in',
+        depth: c.enterAt
+      })),
+      { color: '#8b97a8', name: 'Deepest point below surface',
+        label: formatDistance(deepestDepth), depth: deepestDepth }
+    ];
+
+    listEl.innerHTML = rows.map(r => {
+      const pct = deepestDepth > 0 ? r.depth / deepestDepth : 0;
+      const top = Math.round(pct * (TIMELINE_H - 20)); // 20px reserve at bottom
+      return `
+        <div class="globe-layer-row" style="top:${top}px">
+          <span class="globe-layer-dot" style="background:${r.color};top:${top}px"></span>
+          <span class="globe-layer-name">${r.name}</span>
+          <span class="globe-layer-depth">${r.label}</span>
+        </div>`;
+    }).join('');
 
     const warnEl = document.getElementById('globe-warning');
     const hitsOuterCore = crossings.some(c => c.name === 'Outer core');
     const hitsInnerCore = crossings.some(c => c.name === 'Inner core');
+    // inline SVG warning triangle — matches the stroke-based icon language used throughout the app
+    const warnIcon = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+      style="flex:none;margin-top:1px" aria-hidden="true">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/>
+      <line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>`;
     if (hitsInnerCore) {
-      warnEl.textContent = '⚠️ This tunnel passes through the inner core — roughly 5,200°C and solid iron. Bring serious heat protection.';
+      warnEl.innerHTML = warnIcon + '<span>This tunnel passes through the inner core — roughly 5,200°C and solid iron. Bring serious heat protection.</span>';
       warnEl.classList.add('show');
     } else if (hitsOuterCore) {
-      warnEl.textContent = '⚠️ This tunnel passes through the molten outer core — around 4,000°C of liquid iron. Bring heat protection.';
+      warnEl.innerHTML = warnIcon + '<span>This tunnel passes through the molten outer core — around 4,000°C of liquid iron. Bring heat protection.</span>';
       warnEl.classList.add('show');
     } else {
       warnEl.classList.remove('show');
@@ -1604,7 +1695,7 @@
     resizeGlobeRenderer();
     drawGlobeRoute(origin, destination);
     renderLayerList(origin, destination);
-    document.getElementById('globe-route').textContent = `${origin.name} → ${destination.name}`;
+    document.getElementById('globe-route').textContent = destination.name;
     globeAnimating = true;
     requestAnimationFrame(globeRenderLoop);
   }
@@ -1614,12 +1705,11 @@
     globeAnimating = false;
   }
 
-  // drag to spin (rotation only — no zoom), fading the UI while dragging
+  // drag to spin (rotation only — no zoom)
   let globeDragLast = null;
   globeCanvasEl.addEventListener('pointerdown', (e) => {
     globeDragging = true;
     globeDragLast = { x: e.clientX, y: e.clientY };
-    globeViewEl.classList.add('rotating');
     try { globeCanvasEl.setPointerCapture(e.pointerId); } catch (err) { /* no active pointer to capture */ }
   });
   globeCanvasEl.addEventListener('pointermove', (e) => {
@@ -1634,7 +1724,6 @@
     globeCanvasEl.addEventListener(evt, () => {
       if (!globeDragging) return;
       globeDragging = false;
-      globeViewEl.classList.remove('rotating');
     });
   });
   window.addEventListener('resize', resizeGlobeRenderer);
