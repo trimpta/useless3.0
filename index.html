@@ -295,14 +295,35 @@
   /* ---------- globe preview: 3D Earth cross-section before digging ----------
      top two thirds = rotatable globe, bottom third = layer crossings */
   #globe-view {
+    position: fixed; inset: 0; z-index: 100;
+    background: #eef2f5;
     display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 1900;
-    background: #f0f2f5;
     flex-direction: column;
   }
   #globe-view.show { display: flex; }
+  
+  #globe-view.pip-mode {
+    position: fixed;
+    top: calc(24px + env(safe-area-inset-top));
+    right: 24px;
+    left: auto;
+    bottom: auto;
+    width: 140px;
+    height: 140px;
+    background: transparent;
+    border-radius: 50%;
+    z-index: 1001; /* Above tunnel-view */
+    pointer-events: none; /* Let clicks pass through to tunnel UI */
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  #globe-view.pip-mode #globe-info,
+  #globe-view.pip-mode #globe-hint,
+  #globe-view.pip-mode #globe-close-btn {
+    display: none !important;
+  }
   #globe-canvas {
     flex: 2;
     width: 100%;
@@ -1724,6 +1745,7 @@
   let globeCutFaceGroup = null;
   let globeCutNormal = new THREE.Vector3(0, 0, 1);
   let globeRouteObjects = [];
+  let tunnelLiveDot = null;
   let globeAnimating = false;
   let globeDragging = false;
   let globeAutoSpin = false;
@@ -1939,22 +1961,42 @@
     });
 
     // ----------------------------------------------------------------
-    // Hollow bore-hole (Option B): BackSide cylinder, clipped to near half
+    // Solid line for the tunnel
     // ----------------------------------------------------------------
     const chord = new THREE.Vector3().subVectors(p1, p0);
-    const tubeMat = new THREE.MeshStandardMaterial({
-      color: 0xcc2200, emissive: 0xff3300, emissiveIntensity: 1.2,
-      roughness: 0.5, side: THREE.BackSide,
-      clippingPlanes: [globeClippingPlane]
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 2, depthTest: false });
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([p0, p1]);
+    const line = new THREE.Line(lineGeo, lineMat);
+    globeGroup.add(line);
+    globeRouteObjects.push(line);
+
+    // ----------------------------------------------------------------
+    // Layer intersection markers & Live Tracker Dot
+    // ----------------------------------------------------------------
+    const dir = chord.clone().normalize();
+    const result = computeLayerCrossings(a, b);
+    
+    result.crossings.forEach(crossing => {
+      const distUnit = crossing.enterAt / EARTH_RADIUS_KM;
+      const markerPos = new THREE.Vector3().copy(p0).addScaledVector(dir, distUnit);
+      
+      const dotGeo = new THREE.SphereGeometry(0.015, 16, 16);
+      const dotMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, depthTest: false });
+      const dotMesh = new THREE.Mesh(dotGeo, dotMat);
+      dotMesh.position.copy(markerPos);
+      globeGroup.add(dotMesh);
+      globeRouteObjects.push(dotMesh);
     });
-    const tube = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.018, 0.018, chord.length(), 20, 1, true),
-      tubeMat
+
+    // Create the live tracker dot that moves during simulation
+    tunnelLiveDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.025, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0x00ff00, depthTest: false })
     );
-    tube.position.copy(new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5));
-    tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), chord.clone().normalize());
-    globeGroup.add(tube);
-    globeRouteObjects.push(tube);
+    tunnelLiveDot.position.copy(p0);
+    tunnelLiveDot.visible = false;
+    globeGroup.add(tunnelLiveDot);
+    globeRouteObjects.push(tunnelLiveDot);
   }
 
   function resizeGlobeRenderer() {
@@ -2311,6 +2353,11 @@
     tunnelArrivalEl.classList.remove('show');
     tunnelViewEl.classList.add('show');
 
+    // PiP Globe Mode
+    globeViewEl.classList.add('pip-mode');
+    openGlobeView(); // Keep the globe spinning in the corner!
+    if (tunnelLiveDot) tunnelLiveDot.visible = true;
+
     buildParticles();
     advanceToLayer(0);
     animateTunnelDepth();
@@ -2319,6 +2366,8 @@
   function closeTunnelSimulation() {
     tunnelViewEl.classList.remove('show');
     if (tunnelState.animFrame) { cancelAnimationFrame(tunnelState.animFrame); tunnelState.animFrame = null; }
+    globeViewEl.classList.remove('pip-mode');
+    closeGlobeView();
   }
 
   function buildParticles() {
@@ -2382,7 +2431,7 @@
   }
 
   let tunnelLastTs = null;
-  const TUNNEL_SPEED_KM_S = 80; // km per real second (simulated dig speed)
+  const TUNNEL_SPEED_KM_S = 15; // km per real second (simulated dig speed)
 
   function animateTunnelDepth(ts) {
     tunnelState.animFrame = requestAnimationFrame(animateTunnelDepth);
@@ -2392,7 +2441,7 @@
 
     const diff = tunnelState.targetDepth - tunnelState.currentDepth;
     const isFast = diff > 200; // fast-forwarding if more than 200km behind target
-    const speed = isFast ? TUNNEL_SPEED_KM_S * 20 : TUNNEL_SPEED_KM_S;
+    const speed = isFast ? TUNNEL_SPEED_KM_S * 300 : TUNNEL_SPEED_KM_S;
 
     const depthKmEl = document.getElementById('tunnel-depth-km');
     if (isFast) depthKmEl.classList.add('fast-shake-text');
@@ -2408,10 +2457,19 @@
     const temp = tempFromRadius(radiusKm);
 
     // Update readouts
-    tunnelDepthEl.innerHTML = Math.round(depthKm).toLocaleString() + '<span id="tunnel-depth-unit"> km</span>';
-    tunnelRadiusEl.textContent = Math.round(radiusKm).toLocaleString() + ' km from Earth\'s centre';
-    tunnelTempValEl.textContent = temp.toLocaleString() + '°C';
+    tunnelDepthEl.innerHTML = formatDistance(depthKm) + '<span id="tunnel-depth-unit"> km</span>';
+    tunnelRadiusEl.textContent = formatDistance(radiusKm) + ' km from Earth\'s centre';
+    tunnelTempValEl.textContent = Math.round(temp).toLocaleString() + '°C';
     tunnelTempFillEl.style.width = Math.min(100, (temp / TEMP_MAX) * 100) + '%';
+
+    // Update live tracker dot on the 3D globe
+    if (tunnelLiveDot && origin && destination) {
+      const p0 = latLngToVec3(origin.lat, origin.lng, 1);
+      const p1 = latLngToVec3(destination.lat, destination.lng, 1);
+      const dir = new THREE.Vector3().subVectors(p1, p0).normalize();
+      const distUnit = depthKm / EARTH_RADIUS_KM;
+      tunnelLiveDot.position.copy(p0).addScaledVector(dir, distUnit);
+    }
 
     // Auto-advance when reaching target (end of current layer)
     const crossings = tunnelState.crossings;
