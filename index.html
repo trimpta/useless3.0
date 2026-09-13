@@ -1170,17 +1170,14 @@
     if (distanceLabelMarker) { map.removeLayer(distanceLabelMarker); distanceLabelMarker = null; }
 
     if (digMode) {
-      // the straight line here runs through the Earth — not meaningful to
-      // draw as a flat line on the 2D map, so we don't. Bearing + dig
-      // angle go in the card instead, with an AR view to actually aim.
+      // Auto-open the globe preview immediately — no button click needed
       const bearing = bearingDeg(origin, destination);
       const angle = digAngleDeg(dist);
       document.getElementById('dig-distance').textContent = distText;
       document.getElementById('dig-bearing').textContent = `${Math.round(bearing)}° ${compassLabel(bearing)}`;
       document.getElementById('dig-angle').textContent = `${angle.toFixed(1)}° below horizon`;
-      document.getElementById('card-route').classList.add('show');
-      syncBottomCardHeight();
-      map.flyTo([origin.lat, origin.lng], map.getZoom(), { duration: 0.5 });
+      // Open globe view directly (no intermediate card step)
+      openGlobeView();
     } else {
       const routeCoords = [[origin.lat, origin.lng], [destination.lat, destination.lng]];
       const haloLine = L.polyline(routeCoords, { color: '#fff', weight: 7, opacity: 0.85 });
@@ -1533,7 +1530,7 @@
 
     // Post-processing bloom
     const renderScene = new RenderPass(globeScene, globeCamera);
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.6, 0.5, 0.5);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.5, 0.5, 0.55);
     globeComposer = new EffectComposer(globeRenderer);
     globeComposer.addPass(renderScene);
     globeComposer.addPass(bloomPass);
@@ -1551,28 +1548,23 @@
     globeScene.add(globeGroup);
     globeGroup.scale.setScalar(0.85);
 
-    // globeClippingPlane will be set per-route in drawGlobeRoute.
-    // The clipping plane is set to clip anything on the NEGATIVE normal side
-    // (i.e., the far half), keeping the POSITIVE normal side visible.
-    globeClippingPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+    // The clipping plane keeps the +Z side of the globe (set per-route in drawGlobeRoute)
+    globeClippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 
-    // Use NASA's day-earth satellite texture for a bright, colourful globe
+    // Satellite texture for the outer crust
     const texLoader = new THREE.TextureLoader();
     const earthTex = texLoader.load(
       'https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg'
     );
 
-    // Layer cross-section FILL colours (on the flat cut face)
-    const LAYER_FILL = [0x7ea8c9, 0xd9773a, 0xf0a43a, 0xffe08a];
+    // Layer fill colours shown on the cross-section discs
+    const LAYER_FILL    = [0x6fa8dc, 0xd9773a, 0xf0a43a, 0xffe08a]; // crust/mantle/outer-core/inner-core
     const LAYER_EMISSIVE = [0x000000, 0x551100, 0x993300, 0xbb7700];
 
-    // For each layer, build ONE mesh clipped to the near half
-    // (the round surface is visible) PLUS a flat disc cap on the cut face.
     EARTH_LAYERS.forEach((layer, i) => {
-      const r = layer.outerRadius / EARTH_RADIUS_KM;
+      const r = layer.outerRadius / EARTH_RADIUS_KM; // normalised radius (1 = surface)
 
-      // Round shell — only the unclipped half shows; clip the other half away.
-      // Crust uses the satellite texture; inner layers get solid emissive colours.
+      // --- Round shell: the visible half (clipped on the far side) ---
       const shellMat = i === 0
         ? new THREE.MeshStandardMaterial({
             map: earthTex, roughness: 0.8, metalness: 0.0, side: THREE.FrontSide,
@@ -1585,21 +1577,23 @@
           });
       globeGroup.add(new THREE.Mesh(new THREE.SphereGeometry(r, 64, 40), shellMat));
 
-      // Flat disc cap on the cross-section face — a circle of radius r in the plane.
-      // Rendered WITHOUT clipping so it always fills the cut.
+      // --- Flat disc cap on the cross-section face ---
+      // We use a unit-radius CircleGeometry and scale it in drawGlobeRoute
+      // to sqrt(R^2 - d^2) where d is the plane offset from the Earth's centre.
       const capMat = new THREE.MeshStandardMaterial({
-        color: LAYER_FILL[i], emissive: LAYER_EMISSIVE[i], emissiveIntensity: (i === 0 ? 0 : 0.7),
-        roughness: 0.7, side: THREE.DoubleSide
+        color: LAYER_FILL[i], emissive: LAYER_EMISSIVE[i],
+        emissiveIntensity: i === 0 ? 0.0 : 0.7,
+        roughness: 0.6, side: THREE.DoubleSide
+        // no clipping — the disc always fills the cut face
       });
-      // CircleGeometry fills a full circle; we use it as the disc face.
-      const capMesh = new THREE.Mesh(new THREE.CircleGeometry(r, 64), capMat);
-      // capMesh sits in the local XY plane, facing +Z.
-      // We'll position it by aligning with the clipping plane in drawGlobeRoute.
+      const capMesh = new THREE.Mesh(new THREE.CircleGeometry(1, 64), capMat);
       capMesh.userData.isCap = true;
+      capMesh.userData.layerRadius = r; // stored for radius computation in drawGlobeRoute
+      capMesh.visible = false;          // hidden until drawGlobeRoute sizes it
       globeGroup.add(capMesh);
     });
 
-    // Subtle atmospheric glow ring (a faint sphere just outside the crust, no clip)
+    // Subtle atmosphere glow (no clipping — full sphere)
     globeGroup.add(new THREE.Mesh(
       new THREE.SphereGeometry(1.015, 32, 20),
       new THREE.MeshBasicMaterial({
@@ -1620,59 +1614,85 @@
 
   function drawGlobeRoute(a, b) {
     clearGlobeRoute();
-    const p0 = latLngToVec3(a.lat, a.lng, 1);
-    const p1 = latLngToVec3(b.lat, b.lng, 1);
+    const p0 = latLngToVec3(a.lat, a.lng, 1); // unit-sphere position of origin
+    const p1 = latLngToVec3(b.lat, b.lng, 1); // unit-sphere position of dest
 
-    // The clipping plane's normal defines which half is KEPT.
-    // We want to keep the half that contains BOTH p0 and p1.
-    // The great-circle plane through p0 and p1 has normal = p0 x p1.
-    // By convention THREE clips fragments where dot(pos, normal) + constant < 0,
-    // so keeping the side containing p0/p1 means the normal should point TOWARD them.
-    let sliceNormal = new THREE.Vector3().crossVectors(p0, p1);
-    if (sliceNormal.lengthSq() < 1e-6) {
-      sliceNormal.set(p0.y, -p0.x, 0);
+    // ----------------------------------------------------------------
+    // CUTTING PLANE — vertical (perpendicular to equatorial plane)
+    // The plane's normal lies in the equatorial (XZ) plane, perpendicular
+    // to the horizontal component of the chord p0→p1.
+    // ----------------------------------------------------------------
+    const dx = p1.x - p0.x;
+    const dz = p1.z - p0.z;
+    let worldNormal;
+    if (Math.abs(dx) < 1e-6 && Math.abs(dz) < 1e-6) {
+      // Same longitude: any XZ normal works; pick one perpendicular to p0's XZ projection
+      worldNormal = new THREE.Vector3(-p0.z, 0, p0.x).normalize();
+    } else {
+      // Perpendicular to (dx, 0, dz) in the equatorial plane
+      worldNormal = new THREE.Vector3(-dz, 0, dx).normalize();
     }
-    sliceNormal.normalize();
-    // We want to keep the half that p0 is on; check if p0 is on the positive side.
-    // Since p0 is IN the great-circle plane, the normal is perpendicular to p0.
-    // So instead, pick a normal perpendicular to BOTH p0 and p1 that faces the camera.
-    // Strategy: keep whichever of the two half-spaces has the MIDPOINT of the two points.
-    const midVec = new THREE.Vector3().addVectors(p0, p1).normalize();
-    // Rotate group so that midVec faces the camera (+Z), then the clip plane (normal = -Z)
-    // will discard the far half. Or: set normal to -sliceNormal if it points away from mid.
-    // Actually: set the plane normal to the world-space direction that points AWAY from the
-    // half containing the route; THREE.Plane clips fragments with signed distance < 0.
-    // Simpler: orient the globe so the slice face (the great-circle plane) is frontal,
-    // then use a fixed plane: normal = -Z, constant = 0 (clips z < 0 fragments).
-    // The globe rotation will bring the route into the +Z half automatically.
 
-    // Orient the globe: rotate so `sliceNormal` (= normal to the cut plane) aligns with +Z,
-    // i.e. the cut face is perpendicular to the viewing direction.
-    // Then tilt/yaw slightly so we see the cross-section at an angle.
-    const targetQuat = new THREE.Quaternion().setFromUnitVectors(
-      sliceNormal.clone(),
-      new THREE.Vector3(0, 0, 1)
-    );
-    globeGroup.quaternion.copy(targetQuat);
-    globeGroup.rotateX(0.35);
-    globeGroup.rotateY(-0.35);
+    // Chord midpoint (in unit-sphere space)
+    const mid = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
 
-    // Fixed clipping plane in globe-group LOCAL space: discard the -Z half
-    // (which will be the far hemisphere after the rotation above).
-    // We keep the +Z half which now contains the route.
+    // Signed distance from Earth's centre to the cutting plane
+    // (= dot of any point-on-plane with the normal, since plane passes through mid)
+    let d = worldNormal.dot(mid);
+
+    // Ensure the chord midpoint is on the +Z side after we orient the group
+    // (d must be ≥ 0 so the route is in the visible hemisphere)
+    if (d < 0) { worldNormal.negate(); d = -d; }
+
+    // ----------------------------------------------------------------
+    // Orient globeGroup so that worldNormal → local +Z
+    // After this rotation, the cutting plane is at local z = d
+    // ----------------------------------------------------------------
+    const zAxis = new THREE.Vector3(0, 0, 1);
+    const dot = worldNormal.dot(zAxis);
+    if (dot > 0.9999) {
+      globeGroup.quaternion.identity();
+    } else if (dot < -0.9999) {
+      globeGroup.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+    } else {
+      globeGroup.quaternion.setFromUnitVectors(zAxis, worldNormal);
+    }
+    // Tilt ~35° so you see both the round satellite side and the flat cross-section
+    globeGroup.rotateX(0.38);
+    globeGroup.rotateY(-0.38);
+
+    // ----------------------------------------------------------------
+    // Update clipping plane: keep local z ≥ d (the near hemisphere)
+    // THREE.Plane clips fragments where dot(p, n) + constant < 0
+    // We want: z - d ≥ 0  →  n=(0,0,1), constant = -d
+    // ----------------------------------------------------------------
     globeClippingPlane.normal.set(0, 0, 1);
-    globeClippingPlane.constant = 0;
+    globeClippingPlane.constant = -d;
 
-    // Position cap discs at z=0 in local space, perpendicular to the cut axis (+Z)
+    // ----------------------------------------------------------------
+    // Resize and position cross-section cap discs
+    // Each layer sphere of normalised radius R intersects the plane
+    // (at distance d from centre) as a circle of radius √(R²-d²).
+    // Discs sit at local position (0, 0, d), in the local XY plane.
+    // ----------------------------------------------------------------
     globeGroup.traverse(child => {
-      if (child.userData.isCap) {
-        child.position.set(0, 0, 0);
-        // cap faces +Z (toward the camera), i.e. it sits in the XY plane
-        child.quaternion.identity();
+      if (!child.userData.isCap) return;
+      const R = child.userData.layerRadius;
+      const disc = R * R - d * d;
+      if (disc <= 0) {
+        child.visible = false; // plane misses this layer entirely
+      } else {
+        const r = Math.sqrt(disc);
+        child.position.set(0, 0, d);
+        child.scale.set(r, r, 1);     // scale the unit circle to the correct radius
+        child.quaternion.identity();   // stays flat in the local XY plane (facing +Z)
+        child.visible = true;
       }
     });
 
-    // Rings on the globe surface marking entry and exit
+    // ----------------------------------------------------------------
+    // Surface rings marking the entry and exit points
+    // ----------------------------------------------------------------
     [[p0, 0x4285F4], [p1, 0xEA4335]].forEach(([pos, color]) => {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.025, 0.05, 32),
@@ -1680,13 +1700,14 @@
       );
       ring.position.copy(pos).multiplyScalar(1.003);
       ring.lookAt(new THREE.Vector3(0, 0, 0));
-      ring.rotateY(Math.PI); // flip so face points outward
+      ring.rotateY(Math.PI);
       globeGroup.add(ring);
       globeRouteObjects.push(ring);
     });
 
-    // Hollow bore-hole tube through the globe (Option B)
-    // Rendered with BackSide on a thin cylinder, clipped to the kept hemisphere.
+    // ----------------------------------------------------------------
+    // Hollow bore-hole (Option B): BackSide cylinder, clipped to near half
+    // ----------------------------------------------------------------
     const chord = new THREE.Vector3().subVectors(p1, p0);
     const tubeMat = new THREE.MeshStandardMaterial({
       color: 0xcc2200, emissive: 0xff3300, emissiveIntensity: 1.2,
@@ -1964,8 +1985,7 @@
     }
   }
 
-  // the card's button now opens the 3D preview first; the AR dig view is
-  // entered from there
+  // start-dig-btn opens globe view from the card (kept as fallback)
   document.getElementById('start-dig-btn').addEventListener('click', openGlobeView);
   document.getElementById('globe-dig-btn').addEventListener('click', () => {
     closeGlobeView();
