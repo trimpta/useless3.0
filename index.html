@@ -299,7 +299,7 @@
     position: fixed;
     inset: 0;
     z-index: 1900;
-    background: #000;
+    background: #f0f2f5;
     flex-direction: column;
   }
   #globe-view.show { display: flex; }
@@ -309,23 +309,9 @@
     min-height: 0;
     display: block;
     position: relative;
-    touch-action: none; /* we handle drag-to-rotate ourselves */
+    touch-action: none;
     cursor: grab;
-  }
-  /* soft blue aura centred behind the globe sphere */
-  #globe-view::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    bottom: 34%;          /* only covers the canvas two-thirds, not the panel */
-    pointer-events: none;
-    z-index: 0;
-    background: radial-gradient(
-      circle at 50% 46%,
-      rgba(66,133,244,0.22)  0%,
-      rgba(26,54,120,0.12)  38%,
-      transparent           68%
-    );
+    background: radial-gradient(circle at 50% 46%, #c8dff7 0%, #dce9f5 40%, #f0f2f5 80%);
   }
   #globe-canvas:active { cursor: grabbing; }
   #globe-close-btn {
@@ -336,7 +322,7 @@
     height: 40px;
     border-radius: 50%;
     border: none;
-    background: rgba(255,255,255,0.12);
+    background: rgba(0,0,0,0.12);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -348,19 +334,21 @@
     top: 22px;
     left: 50%;
     transform: translateX(-50%);
-    color: rgba(255,255,255,0.5);
+    color: rgba(0,0,0,0.4);
     font-size: 12px;
+    white-space: nowrap;
     transition: opacity 0.3s ease;
+    pointer-events: none;
   }
   #globe-info {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    background: rgba(21, 27, 36, 0.7);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-top: 1px solid rgba(255,255,255,0.15);
-    padding: 16px 18px calc(18px + env(safe-area-inset-bottom));
+    background: #fff;
+    border-top: 1px solid #e0e0e0;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.12);
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
   }
 
   #globe-info-head {
@@ -369,8 +357,8 @@
     justify-content: space-between;
     gap: 12px;
   }
-  #globe-route { color: #fff; font-size: 15px; font-weight: 700; }
-  #globe-subtitle { color: #8b97a8; font-size: 11px; margin-top: 2px; }
+  #globe-route { color: #222; font-size: 15px; font-weight: 600; }
+  #globe-subtitle { color: #888; font-size: 11px; margin-top: 2px; }
   #globe-dig-btn {
     flex: none;
     border: none;
@@ -391,52 +379,50 @@
     margin-top: 12px;
     padding: 10px 12px;
     border-radius: 10px;
-    background: rgba(234, 67, 53, 0.15);
-    border: 1px solid rgba(234, 67, 53, 0.4);
-    color: #ffb4ad;
+    background: rgba(234, 67, 53, 0.08);
+    border: 1px solid rgba(234, 67, 53, 0.3);
+    color: #c0392b;
     font-size: 12px;
     line-height: 1.4;
     align-items: flex-start;
     gap: 8px;
   }
   #globe-warning.show { display: flex; }
-  /* vertical timeline layer list */
+  /* layer list: normal vertical flow, no absolute positioning */
   #globe-layers {
     position: relative;
-    margin-top: 16px;
-    padding-left: 26px;   /* room for line + dot */
+    margin-top: 14px;
+    padding-left: 22px;
   }
   #globe-layers::before {
     content: '';
     position: absolute;
-    left: 8px;
-    top: 8px; bottom: 8px;
+    left: 6px;
+    top: 6px; bottom: 6px;
     width: 2px;
-    background: linear-gradient(
-      to bottom,
-      rgba(255,255,255,0.30) 0%,
-      rgba(255,255,255,0.07) 100%
-    );
+    background: linear-gradient(to bottom, #ccc 0%, #eee 100%);
     border-radius: 1px;
   }
   .globe-layer-row {
-    position: absolute;
-    left: 0; right: 0;
+    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 0 0 0 26px;
+    padding: 7px 0;
   }
   .globe-layer-dot {
     position: absolute;
-    left: 4px;          /* sits centred on the 2px line */
+    left: -18px;
     width: 10px; height: 10px;
     border-radius: 50%;
-    border: 2px solid rgba(0,0,0,0.55);
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.15);
     flex: none;
+    top: 50%;
+    transform: translateY(-50%);
   }
-  .globe-layer-name { color: #e6edf3; font-size: 13px; flex: 1; }
-  .globe-layer-depth { color: #8b97a8; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .globe-layer-name { color: #333; font-size: 13px; flex: 1; font-weight: 500; }
+  .globe-layer-depth { color: #888; font-size: 12px; font-variant-numeric: tabular-nums; }
 
   /* ---------- dig view: full-screen AR-style camera + direction arrow ---------- */
   #dig-view {
@@ -723,7 +709,7 @@
 <div id="globe-view">
   <canvas id="globe-canvas"></canvas>
   <button id="globe-close-btn" title="Close preview">
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#333" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
   </button>
   <div id="globe-hint">Drag to spin the globe</div>
   <div id="globe-info">
@@ -1545,54 +1531,81 @@
     globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     globeRenderer.localClippingEnabled = true;
 
-    // Post-processing for high-end glowing effects
+    // Post-processing bloom
     const renderScene = new RenderPass(globeScene, globeCamera);
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.0, 0.5, 0.4);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.6, 0.5, 0.5);
     globeComposer = new EffectComposer(globeRenderer);
     globeComposer.addPass(renderScene);
     globeComposer.addPass(bloomPass);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-    globeScene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(5, 3, 5);
-    globeScene.add(dirLight);
-    const coreLight = new THREE.PointLight(0xffe08a, 2.0, 10);
-    coreLight.position.set(0, 0, 0);
-    globeScene.add(coreLight);
+    // Lighting
+    globeScene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const sunLight = new THREE.DirectionalLight(0xfff5e0, 1.4);
+    sunLight.position.set(5, 3, 5);
+    globeScene.add(sunLight);
+    const coreGlow = new THREE.PointLight(0xffe08a, 3.0, 4);
+    coreGlow.position.set(0, 0, 0);
+    globeScene.add(coreGlow);
 
     globeGroup = new THREE.Group();
     globeScene.add(globeGroup);
-    globeGroup.scale.setScalar(0.8);
+    globeGroup.scale.setScalar(0.85);
 
-    // Create the global clipping plane for the slice
-    globeClippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    // globeClippingPlane will be set per-route in drawGlobeRoute.
+    // The clipping plane is set to clip anything on the NEGATIVE normal side
+    // (i.e., the far half), keeping the POSITIVE normal side visible.
+    globeClippingPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
 
+    // Use NASA's day-earth satellite texture for a bright, colourful globe
     const texLoader = new THREE.TextureLoader();
-    const earthTex = texLoader.load('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-dark.jpg');
+    const earthTex = texLoader.load(
+      'https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg'
+    );
 
-    const innerColors = [0xd9773a, 0xf0a43a, 0xffe08a];
-    const innerEmissive = [0x552200, 0xaa4400, 0xffaa00];
+    // Layer cross-section FILL colours (on the flat cut face)
+    const LAYER_FILL = [0x7ea8c9, 0xd9773a, 0xf0a43a, 0xffe08a];
+    const LAYER_EMISSIVE = [0x000000, 0x551100, 0x993300, 0xbb7700];
 
+    // For each layer, build ONE mesh clipped to the near half
+    // (the round surface is visible) PLUS a flat disc cap on the cut face.
     EARTH_LAYERS.forEach((layer, i) => {
       const r = layer.outerRadius / EARTH_RADIUS_KM;
-      const mat = i === 0
+
+      // Round shell — only the unclipped half shows; clip the other half away.
+      // Crust uses the satellite texture; inner layers get solid emissive colours.
+      const shellMat = i === 0
         ? new THREE.MeshStandardMaterial({
-            map: earthTex, roughness: 0.8, side: THREE.DoubleSide,
+            map: earthTex, roughness: 0.8, metalness: 0.0, side: THREE.FrontSide,
             clippingPlanes: [globeClippingPlane]
           })
         : new THREE.MeshStandardMaterial({
-            color: innerColors[i - 1],
-            emissive: innerEmissive[i - 1], emissiveIntensity: 0.8,
-            roughness: 0.9, side: THREE.DoubleSide,
+            color: LAYER_FILL[i], emissive: LAYER_EMISSIVE[i], emissiveIntensity: 0.9,
+            roughness: 0.85, side: THREE.FrontSide,
             clippingPlanes: [globeClippingPlane]
           });
-      globeGroup.add(new THREE.Mesh(new THREE.SphereGeometry(r, 48, 32), mat));
+      globeGroup.add(new THREE.Mesh(new THREE.SphereGeometry(r, 64, 40), shellMat));
+
+      // Flat disc cap on the cross-section face — a circle of radius r in the plane.
+      // Rendered WITHOUT clipping so it always fills the cut.
+      const capMat = new THREE.MeshStandardMaterial({
+        color: LAYER_FILL[i], emissive: LAYER_EMISSIVE[i], emissiveIntensity: (i === 0 ? 0 : 0.7),
+        roughness: 0.7, side: THREE.DoubleSide
+      });
+      // CircleGeometry fills a full circle; we use it as the disc face.
+      const capMesh = new THREE.Mesh(new THREE.CircleGeometry(r, 64), capMat);
+      // capMesh sits in the local XY plane, facing +Z.
+      // We'll position it by aligning with the clipping plane in drawGlobeRoute.
+      capMesh.userData.isCap = true;
+      globeGroup.add(capMesh);
     });
 
+    // Subtle atmospheric glow ring (a faint sphere just outside the crust, no clip)
     globeGroup.add(new THREE.Mesh(
-      new THREE.SphereGeometry(1.001, 24, 16),
-      new THREE.MeshBasicMaterial({ color: 0x8ab4f8, wireframe: true, transparent: true, opacity: 0.08, depthWrite: false, clippingPlanes: [globeClippingPlane] })
+      new THREE.SphereGeometry(1.015, 32, 20),
+      new THREE.MeshBasicMaterial({
+        color: 0x6aacff, transparent: true, opacity: 0.06,
+        side: THREE.BackSide, depthWrite: false
+      })
     ));
   }
 
@@ -1610,48 +1623,84 @@
     const p0 = latLngToVec3(a.lat, a.lng, 1);
     const p1 = latLngToVec3(b.lat, b.lng, 1);
 
-    // Update clipping plane to slice through A and B
-    let normal = new THREE.Vector3().crossVectors(p0, p1);
-    if (normal.lengthSq() < 1e-6) {
-      normal.set(p0.y, -p0.x, 0).normalize();
-    } else {
-      normal.normalize();
+    // The clipping plane's normal defines which half is KEPT.
+    // We want to keep the half that contains BOTH p0 and p1.
+    // The great-circle plane through p0 and p1 has normal = p0 x p1.
+    // By convention THREE clips fragments where dot(pos, normal) + constant < 0,
+    // so keeping the side containing p0/p1 means the normal should point TOWARD them.
+    let sliceNormal = new THREE.Vector3().crossVectors(p0, p1);
+    if (sliceNormal.lengthSq() < 1e-6) {
+      sliceNormal.set(p0.y, -p0.x, 0);
     }
-    globeClippingPlane.normal.copy(normal);
+    sliceNormal.normalize();
+    // We want to keep the half that p0 is on; check if p0 is on the positive side.
+    // Since p0 is IN the great-circle plane, the normal is perpendicular to p0.
+    // So instead, pick a normal perpendicular to BOTH p0 and p1 that faces the camera.
+    // Strategy: keep whichever of the two half-spaces has the MIDPOINT of the two points.
+    const midVec = new THREE.Vector3().addVectors(p0, p1).normalize();
+    // Rotate group so that midVec faces the camera (+Z), then the clip plane (normal = -Z)
+    // will discard the far half. Or: set normal to -sliceNormal if it points away from mid.
+    // Actually: set the plane normal to the world-space direction that points AWAY from the
+    // half containing the route; THREE.Plane clips fragments with signed distance < 0.
+    // Simpler: orient the globe so the slice face (the great-circle plane) is frontal,
+    // then use a fixed plane: normal = -Z, constant = 0 (clips z < 0 fragments).
+    // The globe rotation will bring the route into the +Z half automatically.
 
-    // Rings instead of solid dots for entry/exit
+    // Orient the globe: rotate so `sliceNormal` (= normal to the cut plane) aligns with +Z,
+    // i.e. the cut face is perpendicular to the viewing direction.
+    // Then tilt/yaw slightly so we see the cross-section at an angle.
+    const targetQuat = new THREE.Quaternion().setFromUnitVectors(
+      sliceNormal.clone(),
+      new THREE.Vector3(0, 0, 1)
+    );
+    globeGroup.quaternion.copy(targetQuat);
+    globeGroup.rotateX(0.35);
+    globeGroup.rotateY(-0.35);
+
+    // Fixed clipping plane in globe-group LOCAL space: discard the -Z half
+    // (which will be the far hemisphere after the rotation above).
+    // We keep the +Z half which now contains the route.
+    globeClippingPlane.normal.set(0, 0, 1);
+    globeClippingPlane.constant = 0;
+
+    // Position cap discs at z=0 in local space, perpendicular to the cut axis (+Z)
+    globeGroup.traverse(child => {
+      if (child.userData.isCap) {
+        child.position.set(0, 0, 0);
+        // cap faces +Z (toward the camera), i.e. it sits in the XY plane
+        child.quaternion.identity();
+      }
+    });
+
+    // Rings on the globe surface marking entry and exit
     [[p0, 0x4285F4], [p1, 0xEA4335]].forEach(([pos, color]) => {
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.02, 0.04, 32),
+        new THREE.RingGeometry(0.025, 0.05, 32),
         new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, depthTest: false })
       );
-      ring.position.copy(pos).multiplyScalar(1.002);
+      ring.position.copy(pos).multiplyScalar(1.003);
       ring.lookAt(new THREE.Vector3(0, 0, 0));
+      ring.rotateY(Math.PI); // flip so face points outward
       globeGroup.add(ring);
       globeRouteObjects.push(ring);
     });
 
+    // Hollow bore-hole tube through the globe (Option B)
+    // Rendered with BackSide on a thin cylinder, clipped to the kept hemisphere.
     const chord = new THREE.Vector3().subVectors(p1, p0);
-    // Option B: Hollow Tube - rendered with BackSide so it looks like a hole
     const tubeMat = new THREE.MeshStandardMaterial({
-      color: 0xff4400, emissive: 0xff4400, emissiveIntensity: 1.5,
-      side: THREE.BackSide, clippingPlanes: [globeClippingPlane]
+      color: 0xcc2200, emissive: 0xff3300, emissiveIntensity: 1.2,
+      roughness: 0.5, side: THREE.BackSide,
+      clippingPlanes: [globeClippingPlane]
     });
     const tube = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.015, 0.015, chord.length(), 16),
+      new THREE.CylinderGeometry(0.018, 0.018, chord.length(), 20, 1, true),
       tubeMat
     );
     tube.position.copy(new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5));
     tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), chord.clone().normalize());
     globeGroup.add(tube);
     globeRouteObjects.push(tube);
-
-    // Face the slice cut towards the camera (the normal points towards the camera)
-    const targetQuat = new THREE.Quaternion().setFromUnitVectors(normal, new THREE.Vector3(0, 0, 1));
-    globeGroup.quaternion.copy(targetQuat);
-    // Tilt it slightly so we can see into the slice
-    globeGroup.rotateX(0.3);
-    globeGroup.rotateY(-0.3);
   }
 
   function resizeGlobeRenderer() {
@@ -1666,15 +1715,12 @@
 
   function globeRenderLoop() {
     if (!globeAnimating) return;
-    if (globeAutoSpin && !globeDragging) globeGroup.rotation.y += 0.0015;
-    
-    if (!globeDragging && typeof globeVelocity !== 'undefined' && (Math.abs(globeVelocity.x) > 0.0001 || Math.abs(globeVelocity.y) > 0.0001)) {
+    if (!globeDragging && (Math.abs(globeVelocity.x) > 0.0001 || Math.abs(globeVelocity.y) > 0.0001)) {
       globeGroup.rotation.y += globeVelocity.x;
       globeGroup.rotation.x = Math.max(-1.45, Math.min(1.45, globeGroup.rotation.x + globeVelocity.y));
       globeVelocity.x *= 0.92;
       globeVelocity.y *= 0.92;
     }
-
     if (globeComposer) {
       globeComposer.render();
     } else {
@@ -1686,32 +1732,23 @@
   function renderLayerList(a, b) {
     const { crossings, deepestDepth } = computeLayerCrossings(a, b);
     const listEl = document.getElementById('globe-layers');
-
-    // build timeline rows with dots proportionally spaced by depth
-    const TIMELINE_H = 200; // px — height of the #globe-layers container
-    listEl.style.minHeight = TIMELINE_H + 'px';
+    listEl.style.minHeight = '';
 
     const rows = [
       ...crossings.map(c => ({
         color: c.cssColor,
         name: c.name,
-        label: c.enterAt < 1 ? 'at the surface' : formatDistance(c.enterAt) + ' in',
-        depth: c.enterAt
+        label: c.enterAt < 1 ? 'Starts at the surface' : 'Enters at ' + formatDistance(c.enterAt)
       })),
-      { color: '#8b97a8', name: 'Deepest point below surface',
-        label: formatDistance(deepestDepth), depth: deepestDepth }
+      { color: '#aaa', name: 'Deepest point', label: formatDistance(deepestDepth) + ' below surface' }
     ];
 
-    listEl.innerHTML = rows.map(r => {
-      const pct = deepestDepth > 0 ? r.depth / deepestDepth : 0;
-      const top = Math.round(pct * (TIMELINE_H - 20)); // 20px reserve at bottom
-      return `
-        <div class="globe-layer-row" style="top:${top}px">
-          <span class="globe-layer-dot" style="background:${r.color};top:${top}px"></span>
-          <span class="globe-layer-name">${r.name}</span>
-          <span class="globe-layer-depth">${r.label}</span>
-        </div>`;
-    }).join('');
+    listEl.innerHTML = rows.map(r => `
+      <div class="globe-layer-row">
+        <span class="globe-layer-dot" style="background:${r.color}"></span>
+        <span class="globe-layer-name">${r.name}</span>
+        <span class="globe-layer-depth">${r.label}</span>
+      </div>`).join('');
 
     const warnEl = document.getElementById('globe-warning');
     const hitsOuterCore = crossings.some(c => c.name === 'Outer core');
