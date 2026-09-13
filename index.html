@@ -334,6 +334,13 @@
   #globe-view.pip-mode #globe-close-btn {
     display: none !important;
   }
+  /* the canvas itself carries its own light backdrop for the full-screen
+     preview (see #globe-canvas below) — in pip-mode that read as a plain
+     white box sitting over the tunnel view, so drop it there and let the
+     current-layer color behind the panel show through instead */
+  #globe-view.pip-mode #globe-canvas {
+    background: transparent;
+  }
   #globe-canvas {
     flex: 2;
     width: 100%;
@@ -768,10 +775,10 @@
   }
   #tunnel-depth-label { font-size: 13px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; }
   #tunnel-depth-km {
-    font-size: 56px; font-weight: 800; line-height: 1; letter-spacing: -0.02em;
+    font-size: 38px; font-weight: 800; line-height: 1; letter-spacing: -0.02em;
     text-shadow: 0 2px 16px rgba(0,0,0,0.4);
   }
-  #tunnel-depth-unit { font-size: 22px; font-weight: 500; opacity: 0.8; }
+  #tunnel-depth-unit { font-size: 16px; font-weight: 500; opacity: 0.8; }
   #tunnel-radius-readout { font-size: 13px; opacity: 0.6; margin-top: 4px; }
 
   /* Bottom info card */
@@ -2864,6 +2871,15 @@
     globeViewEl.classList.add('pip-mode');
     openGlobeView();
     globeGroup.rotation.y += Math.PI;
+    globeGroup.updateMatrixWorld();
+    // the clipping plane is baked into world space from the group's
+    // matrixWorld at the moment it's computed (see drawGlobeRoute) — the
+    // rotation above moves the mesh but the plane doesn't follow unless
+    // recomputed here too, which left the "cut" not lining up with what's
+    // actually facing the camera (looked like the full textured globe,
+    // section nowhere in view)
+    const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), globeCutDistance);
+    globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
     if (tunnelLiveDot) tunnelLiveDot.visible = true;
 
     buildParticles();
