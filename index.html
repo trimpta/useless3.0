@@ -97,6 +97,28 @@
   .suggestion:hover { background: #f2f2f2; }
   .suggestion .name { font-weight: 600; color: #222; }
   .suggestion .sub { font-size: 11px; color: #888; }
+  .suggestion { flex-direction: row; align-items: center; gap: 10px; }
+  .suggestion .icon-slot { flex: none; color: #999; display: flex; }
+  .suggestion .text-slot { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .suggestion .text-slot .name, .suggestion .text-slot .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .suggestion .remove-history {
+    flex: none;
+    border: none;
+    background: none;
+    color: #aaa;
+    cursor: pointer;
+    padding: 6px;
+    display: flex;
+  }
+  .suggestion .remove-history:hover { color: #666; }
+  #suggestions-label {
+    padding: 8px 16px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
 
   /* ---------- recenter (locate) button ---------- */
   #locate-btn {
@@ -110,8 +132,10 @@
     background: #fff;
     border: none;
     box-shadow: 0 1px 4px rgba(0,0,0,0.35);
-    font-size: 18px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   /* ---------- bottom overview card: two stacked layers, the route
@@ -154,7 +178,22 @@
   .dot.dest { background: #EA4335; box-shadow: 0 0 0 4px rgba(234,67,53,0.2); }
   .place-name { font-size: 15px; font-weight: 600; color: #222; }
   .place-sub { font-size: 12px; color: #888; margin-top: 1px; }
-  .hint { font-size: 12px; color: #aaa; margin-top: 8px; }
+
+  #card-plain .row { gap: 10px; }
+  #card-plain .pin-icon { flex: none; width: 22px; height: 26px; }
+  #card-plain .place-info { flex: 1; min-width: 0; }
+  #weather {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #444;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  #weather.show { opacity: 1; }
+  #weather .weather-icon { width: 26px; height: 26px; flex: none; }
+  #weather .weather-temp { font-size: 16px; font-weight: 600; }
 
   #card-route .leg { position: relative; padding-left: 26px; margin-bottom: 10px; }
   #card-route .leg:last-of-type { margin-bottom: 0; }
@@ -206,7 +245,9 @@
 
 <div id="top-bar">
   <div id="search-wrap">
-    <span class="icon">&#128269;</span>
+    <span class="icon">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#666" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/></svg>
+    </span>
     <input id="search-input" type="text" placeholder="Search destination, or long-press the map" autocomplete="off" />
     <div id="search-spinner"></div>
     <button id="search-clear">&#10005;</button>
@@ -214,18 +255,32 @@
   </div>
 </div>
 
-<button id="locate-btn" title="Re-center on my location">&#8982;</button>
+<button id="locate-btn" title="Re-center on my location">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#4285F4" stroke-width="2" stroke-linecap="round">
+    <circle cx="12" cy="12" r="3.2" fill="#4285F4" stroke="none"/>
+    <line x1="12" y1="1.5" x2="12" y2="5.5"/>
+    <line x1="12" y1="18.5" x2="12" y2="22.5"/>
+    <line x1="1.5" y1="12" x2="5.5" y2="12"/>
+    <line x1="18.5" y1="12" x2="22.5" y2="12"/>
+  </svg>
+</button>
 
 <div id="bottom-card">
   <div id="card-plain">
     <div class="row">
-      <div class="dot"></div>
-      <div>
+      <svg class="pin-icon" viewBox="0 0 24 26" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#4285F4" d="M12 0C7 0 3 4 3 9c0 7 9 15 9 15s9-8 9-15c0-5-4-9-9-9z"/>
+        <circle cx="12" cy="9" r="3.2" fill="#fff"/>
+      </svg>
+      <div class="place-info">
         <div class="place-name" id="current-place-name">Locating you…</div>
         <div class="place-sub">You are here</div>
       </div>
+      <div id="weather">
+        <span class="weather-icon" id="weather-icon"></span>
+        <span class="weather-temp" id="weather-temp"></span>
+      </div>
     </div>
-    <div class="hint">Long-press (or click-and-hold) anywhere on the map to drop a destination pin.</div>
   </div>
 
   <div id="card-route">
@@ -428,6 +483,45 @@
     originMarker = L.marker([origin.lat, origin.lng], { icon: originIcon }).addTo(map);
     document.getElementById('current-place-name').textContent = origin.name;
     document.getElementById('origin-name').textContent = origin.name;
+    updateWeather(origin.lat, origin.lng);
+  }
+
+  // ---------- weather for the current position, via Open-Meteo (free, no key) ----------
+  const WEATHER_ICONS = {
+    sun: '<svg viewBox="0 0 24 24" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5" fill="#F5A623" stroke="none"/><line x1="12" y1="1.5" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22.5" y2="12"/><line x1="4.2" y1="4.2" x2="6" y2="6"/><line x1="18" y1="18" x2="19.8" y2="19.8"/><line x1="4.2" y1="19.8" x2="6" y2="18"/><line x1="18" y1="6" x2="19.8" y2="4.2"/></svg>',
+    cloudSun: '<svg viewBox="0 0 24 24" fill="none"><circle cx="8" cy="8" r="3.4" fill="#F5A623"/><path fill="#9AA5B1" d="M17 20H8a4.5 4.5 0 0 1-.7-8.94A5.5 5.5 0 0 1 17.9 13.1 4 4 0 0 1 17 20z"/></svg>',
+    cloud: '<svg viewBox="0 0 24 24" fill="none"><path fill="#9AA5B1" d="M18 19H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.6 11.5 4.5 4.5 0 0 1 18 19z"/></svg>',
+    rain: '<svg viewBox="0 0 24 24" fill="none"><path fill="#9AA5B1" d="M18 15H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.6 7.5 4.5 4.5 0 0 1 18 15z"/><line x1="8" y1="18" x2="7" y2="22" stroke="#4285F4" stroke-width="1.6" stroke-linecap="round"/><line x1="12.5" y1="18" x2="11.5" y2="22" stroke="#4285F4" stroke-width="1.6" stroke-linecap="round"/><line x1="17" y1="18" x2="16" y2="22" stroke="#4285F4" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    snow: '<svg viewBox="0 0 24 24" fill="none"><path fill="#9AA5B1" d="M18 15H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.6 7.5 4.5 4.5 0 0 1 18 15z"/><circle cx="8" cy="20" r="1.2" fill="#8FB8E8"/><circle cx="12.5" cy="21.5" r="1.2" fill="#8FB8E8"/><circle cx="17" cy="20" r="1.2" fill="#8FB8E8"/></svg>',
+    storm: '<svg viewBox="0 0 24 24" fill="none"><path fill="#7C8698" d="M18 13H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.6 5.5 4.5 4.5 0 0 1 18 13z"/><polygon points="13,13 9,20 12,20 10.5,24 16,17 13,17" fill="#F5A623"/></svg>',
+    fog: '<svg viewBox="0 0 24 24" fill="none" stroke="#9AA5B1" stroke-width="1.8" stroke-linecap="round"><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="3" y1="19" x2="21" y2="19"/></svg>'
+  };
+  function weatherIconFor(code) {
+    if (code === 0) return WEATHER_ICONS.sun;
+    if (code === 1 || code === 2) return WEATHER_ICONS.cloudSun;
+    if (code === 3) return WEATHER_ICONS.cloud;
+    if (code === 45 || code === 48) return WEATHER_ICONS.fog;
+    if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return WEATHER_ICONS.rain;
+    if ([71,73,75,77,85,86].includes(code)) return WEATHER_ICONS.snow;
+    if ([95,96,99].includes(code)) return WEATHER_ICONS.storm;
+    return WEATHER_ICONS.cloud;
+  }
+  let lastWeatherCoords = null;
+  async function updateWeather(lat, lng) {
+    // skip refetching for a marker move that's basically the same spot
+    if (lastWeatherCoords && Math.abs(lastWeatherCoords.lat - lat) < 0.01 && Math.abs(lastWeatherCoords.lng - lng) < 0.01) return;
+    lastWeatherCoords = { lat, lng };
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('weather fetch failed');
+      const data = await res.json();
+      const cw = data.current_weather;
+      if (!cw) return;
+      document.getElementById('weather-icon').innerHTML = weatherIconFor(cw.weathercode);
+      document.getElementById('weather-temp').textContent = `${Math.round(cw.temperature)}°`;
+      document.getElementById('weather').classList.add('show');
+    } catch (err) { /* weather is a nice-to-have — fail silently */ }
   }
 
   async function setDestination(latlng, name) {
@@ -498,14 +592,47 @@
     map.setView([origin.lat, origin.lng], 15);
   });
 
-  // ---------- search bar: real lookup via Nominatim, debounced ----------
+  // ---------- search bar ----------
+  // Search uses Photon (Komoot's free, no-key geocoder, built for
+  // autocomplete/fuzzy matching) rather than Nominatim — Nominatim is a
+  // structured/exact geocoder and was returning nothing for a lot of
+  // partial or imprecise queries. Nominatim stays in use only for reverse
+  // geocoding (long-press / origin naming), which it's good at.
+  const PHOTON = 'https://photon.komoot.io/api/';
   const input = document.getElementById('search-input');
   const suggestionsEl = document.getElementById('suggestions');
   const clearBtn = document.getElementById('search-clear');
   const spinnerEl = document.getElementById('search-spinner');
 
+  const HISTORY_KEY = 'searchHistory';
+  const HISTORY_MAX = 8;
+
+  function getHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+    catch (err) { return []; }
+  }
+  function saveHistory(list) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch (err) { /* storage unavailable — skip */ }
+  }
+  function addToHistory(entry) {
+    const list = getHistory().filter(h => !(h.lat === entry.lat && h.lng === entry.lng));
+    list.unshift(entry);
+    saveHistory(list.slice(0, HISTORY_MAX));
+  }
+  function removeFromHistory(lat, lng) {
+    saveHistory(getHistory().filter(h => !(h.lat === lat && h.lng === lng)));
+  }
+
+  const HISTORY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>';
+  const CLOSE_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>';
+  const PIN_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 21s7-6.6 7-12A7 7 0 0 0 5 9c0 5.4 7 12 7 12z"/><circle cx="12" cy="9" r="2.4"/></svg>';
+
   let searchDebounce = null;
   let searchAbort = null;
+
+  input.addEventListener('focus', () => {
+    if (!input.value.trim()) renderHistory();
+  });
 
   input.addEventListener('input', () => {
     const q = input.value.trim();
@@ -514,46 +641,76 @@
     clearTimeout(searchDebounce);
     if (searchAbort) searchAbort.abort();
 
-    if (!q) { suggestionsEl.classList.remove('show'); spinnerEl.classList.remove('show'); return; }
+    if (!q) { renderHistory(); spinnerEl.classList.remove('show'); return; }
 
     searchDebounce = setTimeout(async () => {
       spinnerEl.classList.add('show');
       searchAbort = new AbortController();
       try {
-        const url = `${NOMINATIM}/search?format=jsonv2&q=${encodeURIComponent(q)}&limit=6&addressdetails=1`;
-        const res = await fetch(url, { signal: searchAbort.signal, headers: { 'Accept': 'application/json' } });
-        const results = res.ok ? await res.json() : [];
-        renderSuggestions(results);
+        // bias results toward the current map view without hard-restricting to it
+        const c = map.getCenter();
+        const url = `${PHOTON}?q=${encodeURIComponent(q)}&limit=6&lat=${c.lat}&lon=${c.lng}`;
+        const res = await fetch(url, { signal: searchAbort.signal });
+        const data = res.ok ? await res.json() : { features: [] };
+        renderSuggestions(data.features || []);
       } catch (err) {
         if (err.name !== 'AbortError') renderSuggestions([]);
       } finally {
         spinnerEl.classList.remove('show');
       }
-    }, 400); // debounce to respect Nominatim's ~1 req/sec usage policy
+    }, 300);
   });
 
-  function renderSuggestions(results) {
-    if (!results.length) {
-      suggestionsEl.innerHTML = `<div class="suggestion"><span class="sub">No results</span></div>`;
+  function placeLabel(props) {
+    const name = props.name || props.street || 'Unnamed place';
+    const parts = [props.city, props.state, props.country].filter(Boolean);
+    return { name, sub: parts.join(', ') };
+  }
+
+  function renderSuggestions(features) {
+    if (!features.length) {
+      suggestionsEl.innerHTML = `<div class="suggestion"><div class="text-slot"><span class="sub">No results — try a different spelling or a nearby landmark</span></div></div>`;
       suggestionsEl.classList.add('show');
       return;
     }
-    suggestionsEl.innerHTML = results.map(r => {
-      const name = (r.display_name || '').split(',')[0];
-      const sub = (r.display_name || '').split(',').slice(1, 3).join(',').trim();
-      return `<div class="suggestion" data-name="${name.replace(/"/g, '&quot;')}" data-lat="${r.lat}" data-lng="${r.lon}">
-         <span class="name">${name}</span><span class="sub">${sub}</span>
+    suggestionsEl.innerHTML = features.map(f => {
+      const { name, sub } = placeLabel(f.properties);
+      const [lng, lat] = f.geometry.coordinates;
+      return `<div class="suggestion" data-name="${name.replace(/"/g, '&quot;')}" data-lat="${lat}" data-lng="${lng}">
+         <span class="icon-slot">${PIN_ICON}</span>
+         <div class="text-slot"><span class="name">${name}</span><span class="sub">${sub}</span></div>
        </div>`;
     }).join('');
     suggestionsEl.classList.add('show');
   }
 
+  function renderHistory() {
+    const list = getHistory();
+    if (!list.length) { suggestionsEl.classList.remove('show'); return; }
+    suggestionsEl.innerHTML =
+      `<div id="suggestions-label">Recent</div>` +
+      list.map(h => `<div class="suggestion" data-name="${h.name.replace(/"/g, '&quot;')}" data-lat="${h.lat}" data-lng="${h.lng}">
+         <span class="icon-slot">${HISTORY_ICON}</span>
+         <div class="text-slot"><span class="name">${h.name}</span><span class="sub">${h.sub || ''}</span></div>
+         <button class="remove-history" data-remove-lat="${h.lat}" data-remove-lng="${h.lng}" title="Remove from history">${CLOSE_ICON}</button>
+       </div>`).join('');
+    suggestionsEl.classList.add('show');
+  }
+
   suggestionsEl.addEventListener('click', (e) => {
+    const removeBtn = e.target.closest('.remove-history');
+    if (removeBtn) {
+      removeFromHistory(parseFloat(removeBtn.dataset.removeLat), parseFloat(removeBtn.dataset.removeLng));
+      renderHistory();
+      return;
+    }
     const row = e.target.closest('.suggestion');
     if (!row || !row.dataset.lat) return;
     const latlng = { lat: parseFloat(row.dataset.lat), lng: parseFloat(row.dataset.lng) };
     input.value = row.dataset.name;
+    clearBtn.classList.add('show');
     suggestionsEl.classList.remove('show');
+    addToHistory({ name: row.dataset.name, sub: '', lat: latlng.lat, lng: latlng.lng });
     setDestination(latlng, row.dataset.name);
   });
 
@@ -561,6 +718,10 @@
     input.value = '';
     clearBtn.classList.remove('show');
     suggestionsEl.classList.remove('show');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#search-wrap')) suggestionsEl.classList.remove('show');
   });
 
   // ---------- long-press on map to drop destination pin ----------
