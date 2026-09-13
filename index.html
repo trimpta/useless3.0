@@ -329,15 +329,42 @@
     pointer-events: auto;
     cursor: pointer;
   }
-  #dig-arrow {
+  /* the ring itself: fixed size/position, 60% of the shorter screen
+     dimension, centered. Translucent red until aimed correctly. */
+  #dig-ring {
     position: absolute;
     left: 50%;
     top: 50%;
+    width: min(55vw, 55vh);
+    height: min(55vw, 55vh);
+    border-radius: 50%;
     transform: translate(-50%, -50%);
-    transition: transform 0.1s linear, filter 0.2s ease;
+    border: 4px solid rgba(234, 67, 53, 0.75);
+    background: transparent;
+    transition: border-color 0.3s ease;
+  }
+  #dig-ring.locked {
+    border-color: rgba(52, 168, 83, 0.7);
+  }
+  #dig-ring.pulse {
+    animation: digRingPulse 0.6s ease-out;
+  }
+  @keyframes digRingPulse {
+    0%   { transform: translate(-50%, -50%) scale(1);    border-color: rgba(234, 67, 53, 0.75); }
+    40%  { transform: translate(-50%, -50%) scale(1.15); border-color: rgba(52, 168, 83, 1);     }
+    100% { transform: translate(-50%, -50%) scale(1);    border-color: rgba(52, 168, 83, 0.7);   }
+  }
+  /* marker sits exactly on the ring's edge; JS sets left/top to a point
+     on the circle and rotates it to point outward along that radius —
+     only the ANGLE changes, it never moves toward/away from center */
+  #dig-marker {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transition: opacity 0.2s ease;
     filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6));
   }
-  #dig-arrow.locked svg polygon { fill: #34A853; }
+  #dig-marker.hidden { opacity: 0; }
   #dig-status {
     position: absolute;
     top: 60px;
@@ -382,6 +409,55 @@
     cursor: pointer;
   }
   #dig-permission-btn.show { display: block; }
+
+  #dig-proceed-btn {
+    position: absolute;
+    left: 50%;
+    bottom: 90px;
+    transform: translateX(-50%) translateY(12px);
+    display: none;
+    opacity: 0;
+    border: none;
+    background: #34A853;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    padding: 12px 28px;
+    border-radius: 24px;
+    letter-spacing: 0.04em;
+    pointer-events: auto;
+    cursor: pointer;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  #dig-proceed-btn.show { display: block; }
+  #dig-proceed-btn.show.in { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* placeholder for the (future) digging game */
+  #dig-fake-env {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: linear-gradient(180deg, #6b4a2f 0%, #4a3320 60%, #2e1f13 100%);
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 20px;
+    text-align: center;
+    padding: 24px;
+  }
+  #dig-fake-env.show { display: flex; }
+  #dig-fake-env-text { color: #fff; font-size: 18px; font-weight: 700; max-width: 260px; }
+  #dig-fake-env-back {
+    border: none;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+  }
 
   .leaflet-control-attribution { font-size: 9px !important; }
   .leaflet-tile { transition: opacity 0.15s; }
@@ -501,15 +577,31 @@
     <button id="dig-close-btn" title="Close dig view">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
     </button>
-    <div id="dig-arrow">
-      <svg viewBox="0 0 40 40" width="72" height="72"><polygon points="20,3 34,26 20,20 6,26" fill="#EA4335" stroke="#fff" stroke-width="1.5"/></svg>
+
+    <!-- compass ring: fixed circle, 60% of the shorter screen dimension,
+         always centered. The triangle marker always sits exactly on the
+         ring's edge — only its ANGULAR position changes (never moves
+         radially) — pointing outward toward whichever direction the
+         phone needs to turn/tilt. Disappears once aimed correctly. -->
+    <div id="dig-ring">
+      <div id="dig-marker">
+        <svg viewBox="0 0 40 40" width="40" height="40"><polygon points="20,3 34,26 20,20 6,26" fill="#EA4335" stroke="#fff" stroke-width="1.5"/></svg>
+      </div>
     </div>
-    <div id="dig-status">Point your phone forward, then tilt it to aim the arrow</div>
+
+    <div id="dig-status">Point your phone forward, then tilt it to aim the marker</div>
     <div id="dig-readout-live">
       <span id="dig-live-dest">—</span>
       <span id="dig-live-distance">—</span>
     </div>
+    <button id="dig-proceed-btn">PROCEED</button>
     <button id="dig-permission-btn">Enable camera &amp; compass</button>
+  </div>
+
+  <!-- placeholder for the future digging game — just a visual swap for now -->
+  <div id="dig-fake-env">
+    <div id="dig-fake-env-text">🚧 Digging simulation coming soon</div>
+    <button id="dig-fake-env-back">BACK</button>
   </div>
 </div>
 
@@ -1184,13 +1276,20 @@
   // =========================================================
   const digViewEl = document.getElementById('dig-view');
   const digCameraEl = document.getElementById('dig-camera');
-  const digArrowEl = document.getElementById('dig-arrow');
+  const digRingEl = document.getElementById('dig-ring');
+  const digMarkerEl = document.getElementById('dig-marker');
   const digStatusEl = document.getElementById('dig-status');
   const digPermissionBtn = document.getElementById('dig-permission-btn');
+  const digProceedBtn = document.getElementById('dig-proceed-btn');
+  const digFakeEnvEl = document.getElementById('dig-fake-env');
   let digStream = null;
   let digOrientationHandler = null;
   let digTargetBearing = 0;
   let digTargetElevation = 0; // negative = below horizon
+  let digWasLocked = false;
+  let digLastVibrate = 0;
+  const DIG_LOCK_MARGIN = 6; // degrees
+  const DIG_VIBRATE_COOLDOWN_MS = 3000;
 
   function normalizeAngleDelta(deg) {
     return ((deg + 540) % 360) - 180; // shortest signed difference, -180..180
@@ -1212,31 +1311,53 @@
 
     const headingDelta = normalizeAngleDelta(digTargetBearing - heading);
     const elevationDelta = digTargetElevation - currentElevation;
+    const locked = Math.abs(headingDelta) < DIG_LOCK_MARGIN && Math.abs(elevationDelta) < DIG_LOCK_MARGIN;
 
-    const FOV = 50; // degrees of device rotation mapped across the full screen width/height
-    const x = Math.max(-1, Math.min(1, headingDelta / FOV));
-    const y = Math.max(-1, Math.min(1, -elevationDelta / FOV));
+    if (locked) {
+      digMarkerEl.classList.add('hidden');
+    } else {
+      // marker always sits exactly on the ring's edge — only the angle
+      // (direction of headingDelta/elevationDelta) changes, never the radius
+      digMarkerEl.classList.remove('hidden');
+      const angle = Math.atan2(-elevationDelta, headingDelta); // screen-space radians
+      const ringRadius = digRingEl.clientWidth / 2;
+      const mx = ringRadius * Math.cos(angle);
+      const my = ringRadius * Math.sin(angle);
+      const rotationDeg = angle * 180 / Math.PI + 90; // marker art points "up" by default
+      digMarkerEl.style.transform = `translate(calc(-50% + ${mx}px), calc(-50% + ${my}px)) rotate(${rotationDeg}deg)`;
+    }
 
-    const w = digViewEl.clientWidth, h = digViewEl.clientHeight;
-    const px = w / 2 + x * (w / 2) * 0.85;
-    const py = h / 2 + y * (h / 2) * 0.85;
-    const rotation = Math.atan2(y, x) * 180 / Math.PI + 90; // arrow art points "up" by default
+    digRingEl.classList.toggle('locked', locked);
+    digStatusEl.style.display = locked ? 'none' : '';
+    digStatusEl.textContent = 'Turn and tilt your phone to follow the marker';
 
-    digArrowEl.style.left = px + 'px';
-    digArrowEl.style.top = py + 'px';
-    digArrowEl.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
+    // fire the pulse + vibration + proceed button only on the moment of
+    // becoming aligned, not continuously while staying aligned
+    if (locked && !digWasLocked) {
+      digRingEl.classList.remove('pulse');
+      void digRingEl.offsetWidth; // force reflow so the animation restarts even if the class never left the DOM
+      digRingEl.classList.add('pulse');
 
-    const locked = Math.abs(headingDelta) < 6 && Math.abs(elevationDelta) < 6;
-    digArrowEl.classList.toggle('locked', locked);
-    digStatusEl.textContent = locked
-      ? 'Aimed — this is the dig direction'
-      : 'Turn and tilt your phone to follow the arrow';
+      const now = performance.now();
+      if (now - digLastVibrate > DIG_VIBRATE_COOLDOWN_MS) {
+        digLastVibrate = now;
+        if (navigator.vibrate) navigator.vibrate(200);
+      }
+
+      digProceedBtn.classList.add('show');
+      requestAnimationFrame(() => digProceedBtn.classList.add('in'));
+    } else if (!locked && digWasLocked) {
+      digProceedBtn.classList.remove('in');
+      digProceedBtn.classList.remove('show');
+    }
+    digWasLocked = locked;
   }
 
   async function openDigView() {
     if (!destination) return;
     digTargetBearing = bearingDeg(origin, destination);
     digTargetElevation = -digAngleDeg(haversineKm(origin, destination));
+    digWasLocked = false;
     document.getElementById('dig-live-dest').textContent = destination.name;
     document.getElementById('dig-live-distance').textContent =
       `${formatDistance(haversineKm(origin, destination))} · ${Math.round(digTargetBearing)}° ${compassLabel(digTargetBearing)} · ${(-digTargetElevation).toFixed(1)}° below horizon`;
@@ -1247,7 +1368,7 @@
       digStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       digCameraEl.srcObject = digStream;
     } catch (err) {
-      digStatusEl.textContent = 'Camera access denied — showing arrow only';
+      digStatusEl.textContent = 'Camera access denied — showing marker only';
     }
 
     // iOS requires this to be requested from a user gesture — openDigView
@@ -1277,6 +1398,10 @@
 
   function closeDigView() {
     digViewEl.classList.remove('show');
+    digFakeEnvEl.classList.remove('show');
+    digProceedBtn.classList.remove('show', 'in');
+    digMarkerEl.classList.remove('hidden');
+    digRingEl.classList.remove('locked', 'pulse');
     if (digStream) { digStream.getTracks().forEach(t => t.stop()); digStream = null; }
     if (digOrientationHandler) {
       window.removeEventListener('deviceorientationabsolute', digOrientationHandler);
@@ -1288,6 +1413,8 @@
   document.getElementById('start-dig-btn').addEventListener('click', openDigView);
   document.getElementById('dig-close-btn').addEventListener('click', closeDigView);
   digPermissionBtn.addEventListener('click', startDigOrientation);
+  digProceedBtn.addEventListener('click', () => digFakeEnvEl.classList.add('show'));
+  document.getElementById('dig-fake-env-back').addEventListener('click', () => digFakeEnvEl.classList.remove('show'));
 </script>
 
 </body>
