@@ -98,21 +98,6 @@
   .suggestion .name { font-weight: 600; color: #222; }
   .suggestion .sub { font-size: 11px; color: #888; }
 
-  /* small square layer switcher button, top-right of search bar */
-  #layer-btn {
-    flex: none;
-    width: 48px;
-    height: 48px;
-    border-radius: 10px;
-    overflow: hidden;
-    cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-    border: 2px solid #fff;
-    background-size: cover;
-    background-position: center;
-    background-color: #ddd;
-  }
-
   /* ---------- recenter (locate) button ---------- */
   #locate-btn {
     position: absolute;
@@ -227,7 +212,6 @@
     <button id="search-clear">&#10005;</button>
     <div id="suggestions"></div>
   </div>
-  <div id="layer-btn" title="Change map style"></div>
 </div>
 
 <button id="locate-btn" title="Re-center on my location">&#8982;</button>
@@ -283,56 +267,72 @@
   // errorTileUrl: swap a failed tile for a flat placeholder instead of a broken-image icon
   const BLANK_TILE = 'data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==';
 
-  const layers = {
-    // maxNativeZoom kept at each provider's real tile ceiling; Leaflet upscales
-    // beyond that instead of requesting zoom levels that don't exist (the main
-    // cause of tiles failing to load / 400s when zoomed all the way in)
-    topo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap',
-      subdomains: 'abc',
-      maxZoom: 18,
-      maxNativeZoom: 17,
-      errorTileUrl: BLANK_TILE
-    }),
-    satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      attribution: '&copy; Esri, Maxar, Earthstar Geographics',
-      maxZoom: 19,
-      maxNativeZoom: 17,
-      errorTileUrl: BLANK_TILE
-    })
-  };
-  const thumbnails = {
-    topo: 'https://a.tile.opentopomap.org/5/20/12.png',
-    satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/5/12/20'
-  };
-  let currentLayer = 'topo';
-  layers[currentLayer].addTo(map);
-
-  const layerBtn = document.getElementById('layer-btn');
-  function refreshLayerBtn() {
-    const next = currentLayer === 'topo' ? 'satellite' : 'topo';
-    layerBtn.style.backgroundImage = `url(${thumbnails[next]})`;
-  }
-  layerBtn.addEventListener('click', () => {
-    map.removeLayer(layers[currentLayer]);
-    currentLayer = currentLayer === 'topo' ? 'satellite' : 'topo';
-    layers[currentLayer].addTo(map);
-    refreshLayerBtn();
-  });
-  refreshLayerBtn();
+  // maxNativeZoom kept at the provider's real tile ceiling; Leaflet upscales
+  // beyond that instead of requesting zoom levels that don't exist (the main
+  // cause of tiles failing to load / 400s when zoomed all the way in)
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '&copy; Esri, Maxar, Earthstar Geographics',
+    maxZoom: 19,
+    maxNativeZoom: 17,
+    errorTileUrl: BLANK_TILE
+  }).addTo(map);
 
   // ---------- fade top/bottom panes out while the map is moving (pan OR zoom),
   // back in once it settles ----------
   const topBarEl = document.getElementById('top-bar');
   const bottomCardEl = document.getElementById('bottom-card');
+  // set while the custom eased fly-to (below) is driving the view itself,
+  // so its many synthetic movestart/moveend ticks don't flicker the fade
+  let suppressMoveFade = false;
   map.on('movestart', () => {
+    if (suppressMoveFade) return;
     topBarEl.classList.add('dimmed');
     bottomCardEl.classList.add('dimmed');
   });
   map.on('moveend', () => {
+    if (suppressMoveFade) return;
     topBarEl.classList.remove('dimmed');
     bottomCardEl.classList.remove('dimmed');
   });
+
+  // ---------- eased pan+zoom-to-bounds with a true ease-in-out cubic curve
+  // (Leaflet's own flyTo only exposes a single "linearity" knob, not a real
+  // ease-in-out) ----------
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+  function flyToBoundsEased(bounds, { paddingTopLeft = [0, 0], paddingBottomRight = [0, 0], duration = 1000 } = {}) {
+    const target = map._getBoundsCenterZoom(bounds, {
+      paddingTopLeft: L.point(paddingTopLeft),
+      paddingBottomRight: L.point(paddingBottomRight)
+    });
+    const startCenter = map.getCenter();
+    const startZoom = map.getZoom();
+    const endCenter = target.center;
+    const endZoom = target.zoom;
+    const startTime = performance.now();
+
+    topBarEl.classList.add('dimmed');
+    bottomCardEl.classList.add('dimmed');
+    suppressMoveFade = true;
+
+    function step(now) {
+      const t = Math.min(1, (now - startTime) / duration);
+      const e = easeInOutCubic(t);
+      const lat = startCenter.lat + (endCenter.lat - startCenter.lat) * e;
+      const lng = startCenter.lng + (endCenter.lng - startCenter.lng) * e;
+      const zoom = startZoom + (endZoom - startZoom) * e;
+      map.setView([lat, lng], zoom, { animate: false });
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        suppressMoveFade = false;
+        topBarEl.classList.remove('dimmed');
+        bottomCardEl.classList.remove('dimmed');
+      }
+    }
+    requestAnimationFrame(step);
+  }
 
   // ---------- markers / route state ----------
   const originIcon = L.divIcon({
@@ -411,7 +411,12 @@
     // the route card fades/slides up from the bottom OVER the plain card
     document.getElementById('card-route').classList.add('show');
 
-    map.fitBounds(routeLine.getBounds(), { paddingTopLeft: [40, 80], paddingBottomRight: [40, 220] });
+    // eases pan+zoom together over ~1s along an ease-in-out cubic curve
+    flyToBoundsEased(routeLine.getBounds(), {
+      paddingTopLeft: [40, 80],
+      paddingBottomRight: [40, 220],
+      duration: 1000
+    });
   }
 
   function clearDestination() {
