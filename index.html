@@ -296,7 +296,7 @@
   /* ---------- globe preview: 3D Earth cross-section before digging ----------
      top two thirds = rotatable globe, bottom third = layer crossings */
   #globe-view {
-    position: fixed; inset: 0; z-index: 100;
+    position: fixed; inset: 0; z-index: 2000;
     background: #eef2f5;
     display: none;
     flex-direction: column;
@@ -313,7 +313,7 @@
     height: 140px;
     background: transparent;
     border-radius: 50%;
-    z-index: 1001; /* Above tunnel-view */
+    z-index: 2501; /* above #tunnel-view (2500) */
     pointer-events: none; /* Let clicks pass through to tunnel UI */
     overflow: hidden;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
