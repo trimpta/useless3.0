@@ -2483,6 +2483,8 @@
         cancelAnimationFrame(tunnelState.animFrame);
         tunnelState.animFrame = null;
         showArrival();
+      } else {
+        advanceToLayer(idx + 1);
       }
     }
   }
