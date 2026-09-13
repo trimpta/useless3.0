@@ -1599,10 +1599,14 @@
     if (!row || !row.dataset.lat) return;
     const latlng = { lat: parseFloat(row.dataset.lat), lng: parseFloat(row.dataset.lng) };
     input.value = row.dataset.name;
+    input.blur();
     clearBtn.classList.add('show');
     suggestionsEl.classList.remove('show');
     addToHistory({ name: row.dataset.name, sub: '', lat: latlng.lat, lng: latlng.lng });
     setDestination(latlng, row.dataset.name);
+    
+    // Automatically fly into the 3D Globe view after showing the map pan briefly
+    setTimeout(openGlobeView, 800);
   });
 
   clearBtn.addEventListener('click', () => {
