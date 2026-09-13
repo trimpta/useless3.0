@@ -515,6 +515,20 @@
     filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6));
   }
   #dig-marker.hidden { opacity: 0; }
+  /* the 3D pointer arrow sitting inside the ring's transparent middle —
+     its screen POSITION never moves (always dead-center), only its 3D
+     rotation changes, so it reads as a real object hanging in space that
+     turns to keep pointing at the target as you turn/tilt the phone —
+     unlike the ring marker, which only encodes a single flat angle */
+  #dig-arrow-canvas {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 66%;
+    height: 66%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
   #dig-status {
     position: absolute;
     top: 60px;
@@ -943,6 +957,7 @@
          radially) — pointing outward toward whichever direction the
          phone needs to turn/tilt. Disappears once aimed correctly. -->
     <div id="dig-ring">
+      <canvas id="dig-arrow-canvas"></canvas>
       <div id="dig-marker">
         <svg viewBox="0 0 40 40" width="40" height="40"><polygon points="20,3 34,26 20,20 6,26" fill="#EA4335" stroke="#fff" stroke-width="1.5"/></svg>
       </div>
@@ -2379,6 +2394,8 @@
   const digPermissionBtn = document.getElementById('dig-permission-btn');
   const digProceedBtn = document.getElementById('dig-proceed-btn');
   const digFakeEnvEl = document.getElementById('dig-fake-env');
+  const digArrowCanvasEl = document.getElementById('dig-arrow-canvas');
+  let digArrowScene = null, digArrowCamera = null, digArrowRenderer = null, digArrowGroup = null, digArrowHead = null, digArrowShaft = null;
   let digStream = null;
   let digOrientationHandler = null;
   let digTargetBearing = 0;
@@ -2396,6 +2413,83 @@
     if (typeof event.webkitCompassHeading === 'number') return event.webkitCompassHeading;
     if (typeof event.alpha === 'number') return (360 - event.alpha) % 360; // best-effort on non-iOS
     return null;
+  }
+
+  // ---------------------------------------------------------------
+  // 3D pointer arrow — sits inside the ring, screen position fixed,
+  // only its 3D rotation changes. The ring marker only ever encodes a
+  // single flat angle-on-a-circle (easy to read "which way," hard to
+  // read "how much to tilt"); this is a real 3D object that turns to
+  // keep facing the target, giving an actual sense of the two
+  // independent axes (turn left/right, tilt up/down) at once instead of
+  // one blended number.
+  // ---------------------------------------------------------------
+  function initDigArrow() {
+    if (digArrowRenderer) return;
+    digArrowScene = new THREE.Scene();
+    digArrowCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 10);
+    digArrowCamera.position.set(0, 0, 2.4);
+    digArrowCamera.lookAt(0, 0, 0);
+    digArrowRenderer = new THREE.WebGLRenderer({ canvas: digArrowCanvasEl, antialias: true, alpha: true });
+    digArrowRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+    digArrowScene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const dl = new THREE.DirectionalLight(0xffffff, 0.9);
+    dl.position.set(1, 1.5, 2);
+    digArrowScene.add(dl);
+
+    digArrowGroup = new THREE.Group();
+    digArrowScene.add(digArrowGroup);
+
+    // a simple dart: a cone head + a cylinder shaft, both built pointing
+    // along -Z at rest (rotateX(-90°) maps each geometry's default +Y
+    // axis to -Z) — so at rest the arrow points straight into the
+    // screen, away from the camera, which is what "aimed correctly"
+    // should look like (foreshortened, mostly just the tip visible)
+    const arrowMat = new THREE.MeshStandardMaterial({ color: 0xEA4335, roughness: 0.45, metalness: 0.1 });
+    const headGeo = new THREE.ConeGeometry(0.26, 0.62, 20);
+    headGeo.rotateX(-Math.PI / 2);
+    headGeo.translate(0, 0, -0.62);
+    digArrowHead = new THREE.Mesh(headGeo, arrowMat);
+    digArrowGroup.add(digArrowHead);
+
+    const shaftGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.55, 16);
+    shaftGeo.rotateX(-Math.PI / 2);
+    shaftGeo.translate(0, 0, 0.02);
+    digArrowShaft = new THREE.Mesh(shaftGeo, arrowMat);
+    digArrowGroup.add(digArrowShaft);
+
+    resizeDigArrow();
+  }
+
+  function resizeDigArrow() {
+    if (!digArrowRenderer) return;
+    const w = digArrowCanvasEl.clientWidth, h = digArrowCanvasEl.clientHeight;
+    if (!w || !h) return;
+    digArrowRenderer.setSize(w, h, false);
+    digArrowCamera.aspect = w / h;
+    digArrowCamera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resizeDigArrow);
+
+  // headingDelta/elevationDelta are in degrees, same signed values the
+  // ring marker uses (positive headingDelta = target is clockwise/right
+  // of where you're pointing; positive elevationDelta = target is above
+  // where you're pointing). Turning the phone right should swing the
+  // arrow tip to screen-right, tilting down should swing it down —
+  // these signs are a reasoned best guess (see file header note on
+  // deviceorientation being approximate/device-dependent), so flip
+  // either one here first if the arrow turns out mirrored on a real
+  // phone rather than re-deriving the math.
+  function updateDigArrow(headingDelta, elevationDelta, locked) {
+    if (!digArrowRenderer) return;
+    const yawRad = -headingDelta * Math.PI / 180;
+    const pitchRad = elevationDelta * Math.PI / 180;
+    digArrowGroup.rotation.set(pitchRad, yawRad, 0, 'YXZ');
+    const color = locked ? 0x34a853 : 0xEA4335;
+    digArrowHead.material.color.setHex(color);
+    digArrowShaft.material.color.setHex(color);
+    digArrowRenderer.render(digArrowScene, digArrowCamera);
   }
 
   function onDigOrientation(event) {
@@ -2423,6 +2517,8 @@
       const rotationDeg = angle * 180 / Math.PI + 90; // marker art points "up" by default
       digMarkerEl.style.transform = `translate(calc(-50% + ${mx}px), calc(-50% + ${my}px)) rotate(${rotationDeg}deg)`;
     }
+
+    updateDigArrow(headingDelta, elevationDelta, locked);
 
     digRingEl.classList.toggle('locked', locked);
     digStatusEl.style.display = locked ? 'none' : '';
@@ -2460,6 +2556,9 @@
       `${formatDistance(haversineKm(origin, destination))} · ${Math.round(digTargetBearing)}° ${compassLabel(digTargetBearing)} · ${(-digTargetElevation).toFixed(1)}° below horizon`;
 
     digViewEl.classList.add('show');
+    initDigArrow();
+    resizeDigArrow();
+    updateDigArrow(0, 0, false); // neutral pose until the first real orientation event arrives
 
     try {
       digStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
