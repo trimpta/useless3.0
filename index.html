@@ -303,35 +303,18 @@
   }
   #globe-view.show { display: flex; }
   
-  /* the live tunnel-simulation preview — roughly the same amount of
-     screen the globe took on the preview page before digging (a little
-     smaller), positioned below #tunnel-top-bar so the close button and
-     layer badge stay in front of it instead of underneath it (both are
-     otherwise unreachable: the globe would paint over them, and — since
-     it's a sibling z-index:2501 overlay, not a descendant of #tunnel-view
-     — no z-index on #tunnel-view's own children could out-rank it) */
+  /* the live tunnel-simulation preview — a flat 2D cross-section (not
+     the rotatable 3D globe from the page before this one; once you've
+     committed to digging there's nothing left to look around at), sized
+     to roughly what the globe took on that earlier page, a little
+     smaller. A real child of #tunnel-view's own flex column, in normal
+     flow below #tunnel-top-bar, so it can never cover the close button
+     or layer badge in the first place. */
   :root { --tunnel-pip-height: 46vh; }
-  #globe-view.pip-mode {
-    position: fixed;
-    top: calc(64px + env(safe-area-inset-top));
-    left: 0;
-    right: 0;
-    bottom: auto;
-    width: 100%;
-    height: var(--tunnel-pip-height);
-    background: transparent;
-    border-radius: 0 0 24px 24px;
-    z-index: 2501; /* above #tunnel-view (2500) */
-    pointer-events: none; /* Let clicks pass through to tunnel UI */
-    overflow: hidden;
-    box-shadow: 0 12px 24px rgba(0,0,0,0.35);
-    border: none;
-    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  #globe-view.pip-mode #globe-info,
-  #globe-view.pip-mode #globe-hint,
-  #globe-view.pip-mode #globe-close-btn {
-    display: none !important;
+  #tunnel-cross-section {
+    position: relative; z-index: 2; flex: none;
+    width: 100%; height: var(--tunnel-pip-height);
+    display: block;
   }
   #globe-canvas {
     flex: 2;
@@ -770,7 +753,7 @@
   #tunnel-center {
     position: relative; z-index: 2; flex: 1;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 6px; padding: 20px; padding-top: calc(var(--tunnel-pip-height) + 20px);
+    gap: 6px; padding: 20px;
     text-align: center; color: #fff;
   }
   #tunnel-depth-label { font-size: 13px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -991,6 +974,7 @@
     <div id="tunnel-layer-badge">🪨 Crust</div>
     <div style="width:40px"></div>
   </div>
+  <canvas id="tunnel-cross-section"></canvas>
   <div id="tunnel-center">
     <img id="tunnel-pickaxe" src="./pickaxe.png" alt="Pickaxe">
     <div id="tunnel-depth-label">Depth below surface</div>
@@ -1728,6 +1712,26 @@
     { name: 'Inner core', outerRadius: 1221, innerRadius: 0,    color: 0xffe08a, cssColor: '#ffe08a' }
   ];
 
+  // Shared shading math for a layer's base color — used both by the 3D
+  // globe's baked cap textures and the 2D tunnel cross-section, so both
+  // views read as the same palette. Pushes lightness/saturation (not a
+  // flat white/black blend) to keep the hue rich rather than pastel, and
+  // gives deeper/hotter layers (outer/inner core) a tighter, brighter
+  // glow near the center than the mantle's broader, gentler highlight.
+  function shadeLayerColor(hex, isCore) {
+    const base = new THREE.Color(hex);
+    const hsl = {};
+    base.getHSL(hsl);
+    const light = new THREE.Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.1), Math.min(0.93, hsl.l + 0.34));
+    const dark  = new THREE.Color().setHSL(hsl.h, hsl.s, Math.max(0.06, hsl.l - 0.24));
+    return {
+      light: '#' + light.getHexString(),
+      base: '#' + base.getHexString(),
+      dark: '#' + dark.getHexString(),
+      isCore
+    };
+  }
+
   function latLngToVec3(lat, lng, radius) {
     const phi = lat * Math.PI / 180;
     const theta = lng * Math.PI / 180;
@@ -1826,7 +1830,6 @@
   let globeCutFaceGroup = null;
   let globeCutNormal = new THREE.Vector3(0, 0, 1);
   let globeRouteObjects = [];
-  let tunnelLiveDot = null;
   let globeAnimating = false;
   let globeDragging = false;
   let globeAutoSpin = false;
@@ -1893,31 +1896,28 @@
     // the camera angle. RingGeometry/CircleGeometry both derive their UVs
     // straight from (x,y) vertex position over the shape's own radius, so
     // a plain centered gradient image maps onto them correctly as-is.
-    function makeShadedDiscTexture(hex) {
+    function makeShadedDiscTexture(hex, layerIndex) {
       const size = 256;
       const canvas = document.createElement('canvas');
       canvas.width = size; canvas.height = size;
       const ctx = canvas.getContext('2d');
-      const base = new THREE.Color(hex);
-      const light = base.clone().lerp(new THREE.Color(0xffffff), 0.4);
-      const dark = base.clone().lerp(new THREE.Color(0x000000), 0.4);
+      const shades = shadeLayerColor(hex, layerIndex >= 2);
       const grad = ctx.createRadialGradient(
-        size * 0.38, size * 0.36, size * 0.02,
+        size * 0.5, size * 0.47, size * (shades.isCore ? 0.01 : 0.03),
         size * 0.5, size * 0.5, size * 0.72
       );
-      grad.addColorStop(0, '#' + light.getHexString());
-      grad.addColorStop(0.55, '#' + base.getHexString());
-      grad.addColorStop(1, '#' + dark.getHexString());
+      grad.addColorStop(0, shades.light);
+      grad.addColorStop(shades.isCore ? 0.3 : 0.6, shades.base);
+      grad.addColorStop(1, shades.dark);
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, size, size);
-      // light grain for a mineral texture rather than a flat swatch
-      const imgData = ctx.getImageData(0, 0, size, size);
-      const d = imgData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const n = (Math.random() - 0.5) * 14;
-        d[i] += n; d[i + 1] += n; d[i + 2] += n;
-      }
-      ctx.putImageData(imgData, 0, 0);
+      // a thin dark rim at the very edge so adjacent nested layers read as
+      // distinct bands instead of blending into one smooth gradient
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = size * 0.02;
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size * 0.71, 0, Math.PI * 2);
+      ctx.stroke();
       const tex = new THREE.CanvasTexture(canvas);
       tex.needsUpdate = true;
       return tex;
@@ -1951,7 +1951,7 @@
       // — like a geology-textbook cross-section — from every angle.
       // We use a dummy Mesh here, we will rebuild it as RingGeometry in drawGlobeRoute
       const capMat = new THREE.MeshBasicMaterial({
-        map: makeShadedDiscTexture(LAYER_FILL[i]), side: THREE.DoubleSide
+        map: makeShadedDiscTexture(LAYER_FILL[i], i), side: THREE.DoubleSide
         // no clipping — the disc always fills the cut face
       });
       const capMesh = new THREE.Mesh(new THREE.BufferGeometry(), capMat);
@@ -2169,15 +2169,6 @@
       });
     });
 
-    // Create the live tracker dot that moves during simulation
-    tunnelLiveDot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.025, 16, 16),
-      new THREE.MeshBasicMaterial({ color: 0x00ff00, depthTest: false })
-    );
-    tunnelLiveDot.position.copy(p0);
-    tunnelLiveDot.visible = false;
-    globeGroup.add(tunnelLiveDot);
-    globeRouteObjects.push(tunnelLiveDot);
   }
 
   function resizeGlobeRenderer() {
@@ -2608,6 +2599,7 @@
   const tunnelState = {
     crossings: [],     // from computeLayerCrossings
     chordLength: 0,
+    closestApproach: EARTH_RADIUS_KM, // km from Earth's centre at the deepest point
     currentLayerIdx: 0,
     currentDepth: 0,   // km along chord
     targetDepth: 0,    // km — depth we're animating toward
@@ -2615,10 +2607,92 @@
     particles: [],
   };
 
+  // ---------------------------------------------------------------
+  // 2D tunnel cross-section — a flat schematic (not the 3D globe) shown
+  // once you're actually digging: nested circles for crust/mantle/outer
+  // core/inner core at their real relative radii, the chord as a
+  // straight line at the correct perpendicular offset from centre (an
+  // exact 2D circle intersection, not an approximation — both endpoints
+  // sit on the crust circle by construction), and a marker dot tracking
+  // dig progress along it.
+  // ---------------------------------------------------------------
+  const tunnelCanvasEl = document.getElementById('tunnel-cross-section');
+
+  function resizeTunnelCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = tunnelCanvasEl.clientWidth, h = tunnelCanvasEl.clientHeight;
+    if (!w || !h) return;
+    tunnelCanvasEl.width = w * dpr;
+    tunnelCanvasEl.height = h * dpr;
+    tunnelCanvasEl.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', () => {
+    if (tunnelViewEl.classList.contains('show')) {
+      resizeTunnelCanvas();
+      drawTunnelCrossSection(tunnelState.chordLength > 0 ? tunnelState.currentDepth / tunnelState.chordLength : 0);
+    }
+  });
+
+  function drawTunnelCrossSection(progressFrac) {
+    const ctx = tunnelCanvasEl.getContext('2d');
+    const w = tunnelCanvasEl.clientWidth, h = tunnelCanvasEl.clientHeight;
+    if (!w || !h) return;
+    ctx.clearRect(0, 0, w, h);
+
+    const cx = w / 2, cy = h / 2;
+    const R = Math.min(w, h) / 2 * 0.9;
+
+    // nested layers, outermost first, each on top of the previous
+    for (let i = 0; i < EARTH_LAYERS.length; i++) {
+      const rPx = R * (EARTH_LAYERS[i].outerRadius / EARTH_RADIUS_KM);
+      const shades = shadeLayerColor(EARTH_LAYERS[i].color, i >= 2);
+      const grad = ctx.createRadialGradient(
+        cx, cy - rPx * 0.03, rPx * (shades.isCore ? 0.01 : 0.03),
+        cx, cy, rPx
+      );
+      grad.addColorStop(0, shades.light);
+      grad.addColorStop(shades.isCore ? 0.3 : 0.6, shades.base);
+      grad.addColorStop(1, shades.dark);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // the chord: a horizontal line at the closest-approach distance from
+    // centre, clipped exactly to the crust circle
+    const dNorm = tunnelState.closestApproach / EARTH_RADIUS_KM;
+    const yOff = Math.min(0.98, dNorm) * R;
+    const half = Math.sqrt(Math.max(0, R * R - yOff * yOff));
+    const leftX = cx - half, rightX = cx + half, chordY = cy + yOff;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(leftX, chordY);
+    ctx.lineTo(rightX, chordY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // progress marker
+    const px = leftX + (rightX - leftX) * Math.max(0, Math.min(1, progressFrac));
+    ctx.fillStyle = '#4caf50';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, chordY, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
   function openTunnelSimulation(a, b) {
     if (!a || !b) return;
     const result = computeLayerCrossings(a, b);
     tunnelState.crossings = result.crossings;
+    tunnelState.closestApproach = result.closestApproach;
     tunnelState.chordLength = result.chordLength !== undefined
       ? result.chordLength
       : haversineKm(a, b) * 2 * Math.sin(Math.asin(haversineKm(a, b) / 2 / EARTH_RADIUS_KM)); // fallback
@@ -2634,10 +2708,13 @@
     tunnelArrivalEl.classList.remove('show');
     tunnelViewEl.classList.add('show');
 
-    // PiP Globe Mode
-    globeViewEl.classList.add('pip-mode');
-    openGlobeView(); // Keep the globe spinning in the corner!
-    if (tunnelLiveDot) tunnelLiveDot.visible = true;
+    // the live preview here is a flat 2D cross-section, not the full
+    // rotatable 3D globe from the page before this one — once you've
+    // pointed yourself the right way and committed to digging, there's
+    // nothing left to look around at, just the slice you're moving
+    // through
+    resizeTunnelCanvas();
+    drawTunnelCrossSection(0);
 
     buildParticles();
     advanceToLayer(0); // also starts the animation loop
@@ -2647,8 +2724,6 @@
     tunnelViewEl.classList.remove('show');
     if (tunnelState.animFrame) { cancelAnimationFrame(tunnelState.animFrame); tunnelState.animFrame = null; }
     tunnelLastTs = null;
-    globeViewEl.classList.remove('pip-mode');
-    closeGlobeView();
     // same as closeDigView — keep the destination card showing
     if (destination) document.getElementById('card-route').classList.add('show');
   }
@@ -2759,14 +2834,8 @@
     tunnelTempValEl.textContent = Math.round(temp).toLocaleString() + '°C';
     tunnelTempFillEl.style.width = Math.min(100, (temp / TEMP_MAX) * 100) + '%';
 
-    // Update live tracker dot on the 3D globe
-    if (tunnelLiveDot && origin && destination) {
-      const p0 = latLngToVec3(origin.lat, origin.lng, 1);
-      const p1 = latLngToVec3(destination.lat, destination.lng, 1);
-      const dir = new THREE.Vector3().subVectors(p1, p0).normalize();
-      const distUnit = depthKm / EARTH_RADIUS_KM;
-      tunnelLiveDot.position.copy(p0).addScaledVector(dir, distUnit);
-    }
+    // Update the live tracker dot on the 2D cross-section
+    drawTunnelCrossSection(tunnelState.chordLength > 0 ? depthKm / tunnelState.chordLength : 0);
 
     // Reached the edge of the current layer/section — stop and wait for
     // the user to press Continue rather than crossing into the next
