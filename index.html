@@ -270,12 +270,60 @@
   // maxNativeZoom kept at the provider's real tile ceiling; Leaflet upscales
   // beyond that instead of requesting zoom levels that don't exist (the main
   // cause of tiles failing to load / 400s when zoomed all the way in)
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  const TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  L.tileLayer(TILE_URL, {
     attribution: '&copy; Esri, Maxar, Earthstar Geographics',
     maxZoom: 19,
     maxNativeZoom: 17,
-    errorTileUrl: BLANK_TILE
+    errorTileUrl: BLANK_TILE,
+    keepBuffer: 4 // hang onto more off-screen tiles in memory so panning back doesn't re-fetch them
   }).addTo(map);
+
+  // ---------- explicit tile cache: a service worker cache-firsts every
+  // Esri tile request (see sw.js), and on load we warm it for a 1km ring
+  // around Pappanamcode (the event venue / fixed demo origin) so that
+  // area is instant regardless of what the network is doing later ----------
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js')
+      .then(() => navigator.serviceWorker.ready)
+      .then(() => warmTileCache(FALLBACK_ORIGIN, 1, [13, 14, 15, 16, 17]))
+      .catch(() => { /* SW unsupported/blocked (e.g. served over file://) — silently skip */ });
+  }
+
+  function lon2tileX(lon, z) { return Math.floor((lon + 180) / 360 * (1 << z)); }
+  function lat2tileY(lat, z) {
+    const rad = lat * Math.PI / 180;
+    return Math.floor((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2 * (1 << z));
+  }
+  function tilesForRadius(center, radiusKm, zoom) {
+    const dLat = radiusKm / 111.32;
+    const dLng = radiusKm / (111.32 * Math.cos(center.lat * Math.PI / 180));
+    const xs = [lon2tileX(center.lng - dLng, zoom), lon2tileX(center.lng + dLng, zoom)];
+    const ys = [lat2tileY(center.lat - dLat, zoom), lat2tileY(center.lat + dLat, zoom)];
+    const tiles = [];
+    for (let x = Math.min(...xs); x <= Math.max(...xs); x++) {
+      for (let y = Math.min(...ys); y <= Math.max(...ys); y++) {
+        tiles.push({ x, y, z: zoom });
+      }
+    }
+    return tiles;
+  }
+  async function warmTileCache(center, radiusKm, zooms) {
+    const urls = [];
+    for (const z of zooms) {
+      for (const t of tilesForRadius(center, radiusKm, z)) {
+        urls.push(TILE_URL.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x));
+      }
+    }
+    let i = 0;
+    async function worker() {
+      while (i < urls.length) {
+        const url = urls[i++];
+        try { await fetch(url, { mode: 'no-cors' }); } catch (err) { /* skip failed tile */ }
+      }
+    }
+    await Promise.all(Array.from({ length: 6 }, worker)); // small concurrency pool
+  }
 
   // ---------- fade top/bottom panes out while the map is moving (pan OR zoom),
   // back in once it settles ----------
