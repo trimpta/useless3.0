@@ -124,11 +124,15 @@
     letter-spacing: 0.04em;
   }
 
-  /* ---------- recenter (locate) button ---------- */
+  /* ---------- recenter (locate) button + zoom control ----------
+     both sit a constant gap above the bottom panel's current top edge —
+     --controls-bottom is kept in sync with the panel's height in JS, so
+     neither ever gets covered as the panel grows/shrinks */
+  :root { --controls-bottom: 84px; }
   #locate-btn {
     position: absolute;
     right: 12px;
-    bottom: 130px;
+    bottom: var(--controls-bottom);
     z-index: 1000;
     width: 42px;
     height: 42px;
@@ -140,7 +144,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    transition: bottom 0.3s ease;
   }
+  .leaflet-bottom.leaflet-left {
+    bottom: var(--controls-bottom) !important;
+    left: 12px !important;
+    transition: bottom 0.3s ease;
+  }
+  .leaflet-control-zoom { margin: 0 !important; }
 
   /* ---------- bottom overview card: two stacked layers, the route
      card slides/fades up from the bottom OVER the plain card
@@ -160,6 +171,20 @@
        forced to #card-plain's (shorter) height via inset:0 — clipping the
        destination row off the bottom of the card */
     transition: height 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
+  }
+  #bottom-card.dragging {
+    transition: none;
+  }
+  #drag-handle {
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: #ddd;
+    z-index: 5;
   }
   #bottom-card.hide-for-keyboard {
     opacity: 0;
@@ -243,6 +268,19 @@
   .leaflet-control-attribution { font-size: 9px !important; }
   .leaflet-tile { transition: opacity 0.15s; }
 
+  .line-distance-label {
+    display: inline-block;
+    transform: translate(-50%, -50%);
+    background: #fff;
+    color: #222;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 12px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+    white-space: nowrap;
+  }
+
   /* long-press progress ripple */
   .press-ripple {
     position: absolute;
@@ -285,6 +323,7 @@
 </button>
 
 <div id="bottom-card">
+  <div id="drag-handle"></div>
   <div id="card-plain">
     <div class="row">
       <svg class="pin-icon" viewBox="0 0 24 26" xmlns="http://www.w3.org/2000/svg">
@@ -449,11 +488,48 @@
   // forced to #card-plain's shorter height and got clipped
   const cardPlainEl = document.getElementById('card-plain');
   const cardRouteEl = document.getElementById('card-route');
+  const CONTROLS_GAP = 16; // gap between the locate/zoom controls and the panel's top edge
   function syncBottomCardHeight() {
     const active = cardRouteEl.classList.contains('show') ? cardRouteEl : cardPlainEl;
-    bottomCardEl.style.height = active.scrollHeight + 'px';
+    const h = active.scrollHeight;
+    bottomCardEl.style.height = h + 'px';
+    document.documentElement.style.setProperty('--controls-bottom', (h + CONTROLS_GAP) + 'px');
   }
   window.addEventListener('resize', syncBottomCardHeight);
+
+  // ---------- pull the bottom panel up a bit; let go and it springs back
+  // down. Peek-only — nothing new to reveal, just a touch affordance ----------
+  const MAX_PULL = 70;
+  let dragStartY = null;
+  let dragging = false;
+
+  bottomCardEl.addEventListener('pointerdown', (e) => {
+    if (bottomCardEl.classList.contains('hide-for-keyboard')) return;
+    dragStartY = e.clientY;
+    dragging = false;
+  });
+  bottomCardEl.addEventListener('pointermove', (e) => {
+    if (dragStartY === null) return;
+    const dy = dragStartY - e.clientY; // positive = dragging upward
+    if (!dragging) {
+      if (Math.abs(dy) < 6) return; // small deadzone so taps on CLEAR etc. still register
+      dragging = true;
+      bottomCardEl.classList.add('dragging');
+      try { bottomCardEl.setPointerCapture(e.pointerId); } catch (err) { /* no active pointer to capture — safe to ignore */ }
+    }
+    const pull = Math.max(0, Math.min(dy, MAX_PULL));
+    bottomCardEl.style.transform = `translateY(${-pull}px)`;
+  });
+  function endDrag() {
+    if (dragging) {
+      bottomCardEl.classList.remove('dragging');
+      bottomCardEl.style.transform = '';
+    }
+    dragStartY = null;
+    dragging = false;
+  }
+  bottomCardEl.addEventListener('pointerup', endDrag);
+  bottomCardEl.addEventListener('pointercancel', endDrag);
 
   // ---------- pan+zoom-to-bounds ----------
   // This used to be a hand-rolled requestAnimationFrame loop calling
@@ -475,15 +551,19 @@
     className: '', html: '<div style="width:16px;height:16px;border-radius:50%;background:#4285F4;border:3px solid #fff;box-shadow:0 0 0 4px rgba(66,133,244,0.3);"></div>',
     iconSize: [16, 16], iconAnchor: [8, 8]
   });
+  // a plain centered dot, same as the origin marker — the teardrop pin's
+  // tip didn't visually line up with the dashed line, since divIcon
+  // anchoring plus the pin's own asymmetric shape made it hard to pin
+  // exactly on the geo point. A centered dot has no such ambiguity.
   const destIcon = L.divIcon({
-    className: '', html: '<div style="width:26px;height:26px;transform:translateY(-13px);">' +
-      '<svg viewBox="0 0 24 24" width="26" height="26"><path fill="#EA4335" d="M12 0C7 0 3 4 3 9c0 7 9 15 9 15s9-8 9-15c0-5-4-9-9-9z"/><circle cx="12" cy="9" r="3.2" fill="#fff"/></svg></div>',
-    iconSize: [26, 26], iconAnchor: [13, 26]
+    className: '', html: '<div style="width:16px;height:16px;border-radius:50%;background:#EA4335;border:3px solid #fff;box-shadow:0 0 0 4px rgba(234,67,53,0.3);"></div>',
+    iconSize: [16, 16], iconAnchor: [8, 8]
   });
 
   let originMarker = null;
   let destMarker = null;
   let routeLine = null;
+  let distanceLabelMarker = null;
   let origin = { ...FALLBACK_ORIGIN };
   let destination = null;
 
@@ -495,6 +575,9 @@
     const x = Math.sin(dLat/2)**2 +
               Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng/2)**2;
     return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+  }
+  function formatDistance(km) {
+    return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
   }
 
   // real reverse geocode via Nominatim; falls back to raw coordinates on failure
@@ -579,9 +662,21 @@
     routeLine = L.featureGroup([haloLine, dashLine]).addTo(map);
 
     const dist = haversineKm(origin, destination);
+    const distText = formatDistance(dist);
     document.getElementById('dest-name').textContent = destination.name;
-    document.getElementById('distance-value').innerHTML =
-      (dist < 1 ? Math.round(dist * 1000) + ' <span>m, straight-line</span>' : dist.toFixed(1) + ' <span>km, straight-line</span>');
+    document.getElementById('distance-value').innerHTML = `${distText} <span>straight-line</span>`;
+
+    // distance badge sitting on the line itself, at its midpoint
+    if (distanceLabelMarker) map.removeLayer(distanceLabelMarker);
+    const midLatLng = [(origin.lat + destination.lat) / 2, (origin.lng + destination.lng) / 2];
+    distanceLabelMarker = L.marker(midLatLng, {
+      icon: L.divIcon({
+        className: '',
+        html: `<div class="line-distance-label">${distText}</div>`,
+        iconSize: [0, 0]
+      }),
+      interactive: false
+    }).addTo(map);
 
     // the route card fades/slides up from the bottom OVER the plain card
     document.getElementById('card-route').classList.add('show');
@@ -597,6 +692,7 @@
     destination = null;
     if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
     if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+    if (distanceLabelMarker) { map.removeLayer(distanceLabelMarker); distanceLabelMarker = null; }
     document.getElementById('card-route').classList.remove('show');
     syncBottomCardHeight();
     input.value = '';
