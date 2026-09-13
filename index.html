@@ -444,7 +444,12 @@
     transform: translateY(-50%);
   }
   .globe-layer-name { color: #333; font-size: 13px; flex: 1; font-weight: 500; }
-  .globe-layer-depth { color: #888; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .globe-layer-depth {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+    font-variant-numeric: tabular-nums;
+  }
+  .globe-layer-depth .enter { color: #888; font-size: 12px; }
+  .globe-layer-depth .exit { color: #aaa; font-size: 11px; }
 
   /* ---------- dig view: full-screen AR-style camera + direction arrow ---------- */
   #dig-view {
@@ -1712,9 +1717,14 @@
   }
 
   // Where does the straight tunnel cross each layer boundary? Solve
-  // |P0 + t*D|^2 = Rb^2 for the entry (smaller positive) root — t is
-  // directly the distance travelled from the origin, since D is a unit
-  // vector in km space.
+  // |P0 + t*D|^2 = Rb^2 — this is a quadratic with (up to) two roots: the
+  // smaller is where the tunnel dips IN to that boundary, the larger is
+  // where it climbs back OUT the same boundary on the far side of the
+  // deepest point. t is directly the distance travelled from the origin,
+  // since D is a unit vector in km space. Every layer the tunnel reaches
+  // is therefore entered once and exited once (the crust's "exit" is
+  // where it first leaves for the layer below; its second, near-surface
+  // reappearance next to the destination isn't tracked separately here).
   function computeLayerCrossings(a, b) {
     const p0 = latLngToVec3(a.lat, a.lng, EARTH_RADIUS_KM);
     const p1 = latLngToVec3(b.lat, b.lng, EARTH_RADIUS_KM);
@@ -1727,20 +1737,64 @@
     // simply the chord's midpoint
     const closestApproach = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5).length();
 
-    // the crust starts at the surface, so it's entered immediately; every
-    // other layer is entered where the tunnel crosses the boundary above
-    // it (i.e. the previous layer's inner radius)
-    const crossings = [{ name: EARTH_LAYERS[0].name, cssColor: EARTH_LAYERS[0].cssColor, enterAt: 0 }];
+    // the crust starts at the surface and (by default) ends at the
+    // destination surface too, unless the tunnel goes deeper — in which
+    // case its exit gets overwritten below with where it actually leaves
+    const crossings = [{ name: EARTH_LAYERS[0].name, cssColor: EARTH_LAYERS[0].cssColor, enterAt: 0, exitAt: chordLength }];
     for (let i = 1; i < EARTH_LAYERS.length; i++) {
       const rb = EARTH_LAYERS[i - 1].innerRadius; // boundary between layer i-1 and layer i
       const disc = p0DotD * p0DotD - (EARTH_RADIUS_KM * EARTH_RADIUS_KM - rb * rb);
       if (disc < 0) continue; // tunnel never gets this deep
-      const t = -p0DotD - Math.sqrt(disc);
-      if (t > 0 && t < chordLength) {
-        crossings.push({ name: EARTH_LAYERS[i].name, cssColor: EARTH_LAYERS[i].cssColor, enterAt: t });
+      const sq = Math.sqrt(disc);
+      const enterAt = -p0DotD - sq;
+      const exitAt = -p0DotD + sq;
+      if (enterAt > 0 && enterAt < chordLength) {
+        crossings.push({ name: EARTH_LAYERS[i].name, cssColor: EARTH_LAYERS[i].cssColor, enterAt, exitAt: Math.min(exitAt, chordLength) });
+        crossings[i - 1].exitAt = enterAt; // the shallower layer exits exactly where this one begins
       }
     }
     return { crossings, closestApproach, chordLength, deepestDepth: EARTH_RADIUS_KM - closestApproach };
+  }
+
+  // A floating pill-shaped label sprite (Minecraft nametag style) that
+  // always faces the camera, since THREE.Sprite billboards automatically.
+  function makeNametagSprite(text) {
+    const fontSize = 44;
+    const padX = 20, padY = 14;
+    const measureCanvas = document.createElement('canvas');
+    const mctx = measureCanvas.getContext('2d');
+    mctx.font = `600 ${fontSize}px system-ui, -apple-system, Roboto, sans-serif`;
+    const textWidth = mctx.measureText(text).width;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(textWidth + padX * 2);
+    canvas.height = fontSize + padY * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.font = `600 ${fontSize}px system-ui, -apple-system, Roboto, sans-serif`;
+    const r = canvas.height / 2;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.arcTo(canvas.width, 0, canvas.width, canvas.height, r);
+    ctx.arcTo(canvas.width, canvas.height, 0, canvas.height, r);
+    ctx.arcTo(0, canvas.height, 0, 0, r);
+    ctx.arcTo(0, 0, canvas.width, 0, r);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(15,15,20,0.82)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, padX, canvas.height / 2 + 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+    const spriteHeight = 0.075;
+    sprite.scale.set(spriteHeight * (canvas.width / canvas.height), spriteHeight, 1);
+    sprite.renderOrder = 999;
+    return sprite;
   }
 
   const globeViewEl = document.getElementById('globe-view');
@@ -1828,11 +1882,16 @@
       globeGroup.add(shellMesh);
 
       // --- Flat disc cap on the cross-section face ---
+      // Deliberately UNLIT (MeshBasicMaterial): a lit material's brightness
+      // depends on the angle between its face normal and the lights, and
+      // this cap's normal IS the camera-facing direction whenever the cut
+      // face is spun to face the viewer — so any light-responsive material
+      // here washes out to a flat bright color at exactly that angle
+      // (this was the solid-yellow bug). A flat unlit fill reads correctly
+      // — like a geology-textbook cross-section — from every angle.
       // We use a dummy Mesh here, we will rebuild it as RingGeometry in drawGlobeRoute
-      const capMat = new THREE.MeshStandardMaterial({
-        color: LAYER_FILL[i], emissive: LAYER_EMISSIVE[i],
-        emissiveIntensity: i === 0 ? 0.0 : 0.35,
-        roughness: 0.6, side: THREE.DoubleSide
+      const capMat = new THREE.MeshBasicMaterial({
+        color: LAYER_FILL[i], side: THREE.DoubleSide
         // no clipping — the disc always fills the cut face
       });
       const capMesh = new THREE.Mesh(new THREE.BufferGeometry(), capMat);
@@ -1974,31 +2033,80 @@
     });
 
     // ----------------------------------------------------------------
-    // Solid line for the tunnel
+    // Nametag sprites — Minecraft-style floating labels above each point,
+    // always facing the camera (THREE.Sprite does this automatically)
     // ----------------------------------------------------------------
-    const chord = new THREE.Vector3().subVectors(p1, p0);
-    const lineMat = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 2, depthTest: false });
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([p0, p1]);
-    const line = new THREE.Line(lineGeo, lineMat);
-    globeGroup.add(line);
-    globeRouteObjects.push(line);
+    [[p0, a.name], [p1, b.name]].forEach(([pos, label]) => {
+      if (!label) return;
+      const tag = makeNametagSprite(label);
+      tag.position.copy(pos).multiplyScalar(1.09);
+      globeGroup.add(tag);
+      globeRouteObjects.push(tag);
+    });
 
     // ----------------------------------------------------------------
-    // Layer intersection markers & Live Tracker Dot
+    // Tunnel shaft — a translucent tube along the chord (instead of a
+    // thin line) so it actually reads as a bored tunnel, with a bright
+    // core line for visibility at a distance and periodic support rings
     // ----------------------------------------------------------------
+    const chord = new THREE.Vector3().subVectors(p1, p0);
+    const chordLen = chord.length();
     const dir = chord.clone().normalize();
+    const chordMid = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
+    const tubeQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+
+    const TUNNEL_RADIUS = 0.014;
+    const tunnelMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(TUNNEL_RADIUS, TUNNEL_RADIUS, chordLen, 16, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0x4a3524, side: THREE.DoubleSide, transparent: true, opacity: 0.55, depthTest: false
+      })
+    );
+    tunnelMesh.position.copy(chordMid);
+    tunnelMesh.quaternion.copy(tubeQuat);
+    globeGroup.add(tunnelMesh);
+    globeRouteObjects.push(tunnelMesh);
+
+    const coreLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([p0, p1]),
+      new THREE.LineBasicMaterial({ color: 0xffcc66, linewidth: 2, depthTest: false })
+    );
+    globeGroup.add(coreLine);
+    globeRouteObjects.push(coreLine);
+
+    // support rings every ~0.15 units of tunnel length, like mineshaft framing
+    const ringQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    const ringCount = Math.max(2, Math.floor(chordLen / 0.15));
+    for (let i = 1; i < ringCount; i++) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(TUNNEL_RADIUS * 1.2, 0.0035, 6, 16),
+        new THREE.MeshBasicMaterial({ color: 0x8a6a4a, depthTest: false })
+      );
+      ring.position.copy(p0).addScaledVector(dir, chordLen * (i / ringCount));
+      ring.quaternion.copy(ringQuat);
+      globeGroup.add(ring);
+      globeRouteObjects.push(ring);
+    }
+
+    // ----------------------------------------------------------------
+    // Layer intersection markers (entry AND exit — each layer the tunnel
+    // dips into, it also climbs back out of) & Live Tracker Dot
+    // ----------------------------------------------------------------
     const result = computeLayerCrossings(a, b);
-    
+
     result.crossings.forEach(crossing => {
-      const distUnit = crossing.enterAt / EARTH_RADIUS_KM;
-      const markerPos = new THREE.Vector3().copy(p0).addScaledVector(dir, distUnit);
-      
-      const dotGeo = new THREE.SphereGeometry(0.015, 16, 16);
-      const dotMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, depthTest: false });
-      const dotMesh = new THREE.Mesh(dotGeo, dotMat);
-      dotMesh.position.copy(markerPos);
-      globeGroup.add(dotMesh);
-      globeRouteObjects.push(dotMesh);
+      [crossing.enterAt, crossing.exitAt].forEach(atKm => {
+        if (atKm == null) return;
+        const distUnit = atKm / EARTH_RADIUS_KM;
+        const markerPos = new THREE.Vector3().copy(p0).addScaledVector(dir, distUnit);
+
+        const dotGeo = new THREE.SphereGeometry(0.015, 16, 16);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, depthTest: false });
+        const dotMesh = new THREE.Mesh(dotGeo, dotMat);
+        dotMesh.position.copy(markerPos);
+        globeGroup.add(dotMesh);
+        globeRouteObjects.push(dotMesh);
+      });
     });
 
     // Create the live tracker dot that moves during simulation
@@ -2041,7 +2149,7 @@
   }
 
   function renderLayerList(a, b) {
-    const { crossings, deepestDepth } = computeLayerCrossings(a, b);
+    const { crossings, deepestDepth, chordLength } = computeLayerCrossings(a, b);
     const listEl = document.getElementById('globe-layers');
     listEl.style.minHeight = '';
 
@@ -2049,16 +2157,22 @@
       ...crossings.map(c => ({
         color: c.cssColor,
         name: c.name,
-        label: c.enterAt < 1 ? 'Starts at the surface' : 'Enters at ' + formatDistance(c.enterAt)
+        enterLabel: c.enterAt < 1 ? 'Starts at the surface' : 'Enters at ' + formatDistance(c.enterAt),
+        // a layer the tunnel never leaves (e.g. crust on a short dig, or
+        // whichever layer is deepest) has no separate exit to show
+        exitLabel: c.exitAt < chordLength - 1 && c.exitAt > c.enterAt ? 'Exits at ' + formatDistance(c.exitAt) : null
       })),
-      { color: '#aaa', name: 'Deepest point', label: formatDistance(deepestDepth) + ' below surface' }
+      { color: '#aaa', name: 'Deepest point', enterLabel: formatDistance(deepestDepth) + ' below surface', exitLabel: null }
     ];
 
     listEl.innerHTML = rows.map(r => `
       <div class="globe-layer-row">
         <span class="globe-layer-dot" style="background:${r.color}"></span>
         <span class="globe-layer-name">${r.name}</span>
-        <span class="globe-layer-depth">${r.label}</span>
+        <span class="globe-layer-depth">
+          <span class="enter">${r.enterLabel}</span>
+          ${r.exitLabel ? `<span class="exit">${r.exitLabel}</span>` : ''}
+        </span>
       </div>`).join('');
 
     const warnEl = document.getElementById('globe-warning');
@@ -2128,33 +2242,58 @@
     screenshot() {
       return globeCanvasEl ? globeCanvasEl.toDataURL('image/png') : null;
     },
+    // sets the coast velocity directly, bypassing pointer events — useful
+    // for testing the render-loop's inertia decay in isolation from
+    // whatever dispatches the drag gesture
+    fling(radiansPerFrame) {
+      globeDragging = false;
+      globeVelocity.x = radiansPerFrame;
+      return this.state();
+    },
+    isDragging() { return globeDragging; },
     state() {
       return {
         destName: destination && destination.name,
         globeShown: globeViewEl.classList.contains('show'),
         rotationY: globeGroup ? globeGroup.rotation.y : null,
-        cutDistance: globeCutDistance
+        cutDistance: globeCutDistance,
+        velocityX: globeVelocity.x,
+        dragging: globeDragging
       };
     }
   };
 
-  // drag to spin with inertia
+  // drag to spin, with fling inertia on release
   let globeDragLast = null;
   let globeVelocity = { x: 0, y: 0 };
+  // time-smoothed px/ms speed, independent of per-move rotation step —
+  // using only the last pointermove's delta (as before) meant a fast
+  // flick that naturally decelerates right before lift-off left almost
+  // no coast; this tracks real speed so a hard flick keeps spinning
+  let globeFlingSpeed = 0;
+  const GLOBE_FLING_MAX = 0.09; // rad applied per frame, cap so it can't run away
   globeCanvasEl.addEventListener('pointerdown', (e) => {
     globeDragging = true;
-    globeDragLast = { x: e.clientX, y: e.clientY };
+    globeDragLast = { x: e.clientX, y: e.clientY, t: performance.now() };
     globeVelocity = { x: 0, y: 0 };
+    globeFlingSpeed = 0;
     try { globeCanvasEl.setPointerCapture(e.pointerId); } catch (err) { /* no active pointer to capture */ }
   });
   globeCanvasEl.addEventListener('pointermove', (e) => {
     if (!globeDragging) return;
+    const now = performance.now();
     const dx = e.clientX - globeDragLast.x;
-    globeDragLast = { x: e.clientX, y: e.clientY };
+    const dt = Math.max(1, now - globeDragLast.t); // ms, floored to avoid div-by-0
+    globeDragLast = { x: e.clientX, y: e.clientY, t: now };
     globeVelocity.x = dx * 0.006;
-    
+
+    // exponential moving average of px/ms — smooths out jitter between
+    // individual move events while still tracking a genuine fast flick
+    const instSpeed = dx / dt;
+    globeFlingSpeed = globeFlingSpeed * 0.7 + instSpeed * 0.3;
+
     globeGroup.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), globeVelocity.x);
-    
+
     globeGroup.updateMatrixWorld();
     const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), globeCutDistance);
     globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
@@ -2163,6 +2302,11 @@
     globeCanvasEl.addEventListener(evt, () => {
       if (!globeDragging) return;
       globeDragging = false;
+      // hand off to the render loop's coast: a real flick (tracked via
+      // globeFlingSpeed, in px/ms) spins noticeably; a slow drag barely
+      // coasts at all, since globeFlingSpeed stays near zero for it
+      const flungVelocity = globeFlingSpeed * 0.02;
+      globeVelocity.x = Math.max(-GLOBE_FLING_MAX, Math.min(GLOBE_FLING_MAX, flungVelocity));
     });
   });
   window.addEventListener('resize', resizeGlobeRenderer);
