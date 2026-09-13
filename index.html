@@ -620,9 +620,150 @@
     opacity: 0.9;
   }
   .press-ripple.grow { width: 46px; height: 46px; opacity: 0; }
+
+  /* =========================================================
+     Tunnel layer simulation view
+     ========================================================= */
+  #tunnel-view {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2500;
+    flex-direction: column;
+    overflow: hidden;
+    font-family: system-ui, -apple-system, Roboto, sans-serif;
+  }
+  #tunnel-view.show { display: flex; }
+
+  /* Animated scrolling background */
+  #tunnel-bg {
+    position: absolute;
+    inset: 0;
+    transition: background 0.8s ease;
+    overflow: hidden;
+  }
+  #tunnel-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 18px,
+      rgba(0,0,0,0.07) 18px, rgba(0,0,0,0.07) 20px
+    );
+    animation: tunnelScroll 1s linear infinite;
+  }
+  @keyframes tunnelScroll {
+    from { background-position: 0 0; }
+    to   { background-position: 0 -40px; }
+  }
+  #tunnel-particles { position: absolute; inset: 0; pointer-events: none; }
+  .tunnel-particle {
+    position: absolute;
+    border-radius: 50%;
+    opacity: 0;
+    animation: particleFall linear infinite;
+  }
+  @keyframes particleFall {
+    0%   { opacity: 0; transform: translateY(-20px) scale(0.5); }
+    15%  { opacity: 0.7; }
+    85%  { opacity: 0.5; }
+    100% { opacity: 0; transform: translateY(110vh) scale(1.2); }
+  }
+
+  /* Top bar */
+  #tunnel-top-bar {
+    position: relative; z-index: 2;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 16px;
+    padding-top: calc(16px + env(safe-area-inset-top));
+  }
+  #tunnel-close-btn {
+    width: 40px; height: 40px; border-radius: 50%; border: none;
+    background: rgba(0,0,0,0.25); color: #fff; font-size: 18px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  #tunnel-layer-badge {
+    background: rgba(255,255,255,0.18); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.3); color: #fff;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.05em;
+    padding: 7px 16px; border-radius: 20px;
+  }
+
+  /* Main depth display */
+  #tunnel-center {
+    position: relative; z-index: 2; flex: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; padding: 20px; text-align: center; color: #fff;
+  }
+  #tunnel-depth-label { font-size: 13px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; }
+  #tunnel-depth-km {
+    font-size: 56px; font-weight: 800; line-height: 1; letter-spacing: -0.02em;
+    text-shadow: 0 2px 16px rgba(0,0,0,0.4);
+  }
+  #tunnel-depth-unit { font-size: 22px; font-weight: 500; opacity: 0.8; }
+  #tunnel-radius-readout { font-size: 13px; opacity: 0.6; margin-top: 4px; }
+
+  /* Bottom info card */
+  #tunnel-bottom-card {
+    position: relative; z-index: 2;
+    background: rgba(0,0,0,0.35); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-top: 1px solid rgba(255,255,255,0.15); border-radius: 20px 20px 0 0;
+    padding: 18px 20px calc(24px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  #tunnel-temp-header {
+    display: flex; justify-content: space-between; align-items: center;
+    color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 600;
+  }
+  #tunnel-temp-value { font-size: 18px; font-weight: 800; color: #fff; }
+  #tunnel-temp-bar-track {
+    height: 10px; background: rgba(255,255,255,0.15); border-radius: 5px; overflow: hidden;
+  }
+  #tunnel-temp-bar-fill {
+    height: 100%; border-radius: 5px;
+    background: linear-gradient(to right, #4fc3f7, #ff8f00, #f44336);
+    transition: width 0.4s ease; width: 0%;
+  }
+  #tunnel-next-info { color: rgba(255,255,255,0.65); font-size: 12px; text-align: center; }
+  #tunnel-next-info strong { color: rgba(255,255,255,0.9); }
+  #tunnel-continue-btn {
+    border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.2);
+    color: #fff; font-size: 15px; font-weight: 700; letter-spacing: 0.04em;
+    padding: 14px; border-radius: 14px; cursor: pointer;
+    transition: background 0.2s ease, transform 0.1s ease;
+  }
+  #tunnel-continue-btn:active { transform: scale(0.97); }
+  #tunnel-continue-btn:hover { background: rgba(255,255,255,0.3); }
+
+  /* Arrival screen */
+  #tunnel-arrival {
+    display: none; position: absolute; inset: 0; z-index: 3;
+    background: linear-gradient(180deg, #1a3a2a 0%, #0d2016 100%);
+    flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 32px 24px calc(32px + env(safe-area-inset-bottom));
+    gap: 14px; color: #fff; animation: tunnelArrivalIn 0.6s ease;
+  }
+  #tunnel-arrival.show { display: flex; }
+  @keyframes tunnelArrivalIn {
+    from { opacity: 0; transform: translateY(30px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  #tunnel-arrival-globe { font-size: 72px; line-height: 1; }
+  #tunnel-arrival-title { font-size: 28px; font-weight: 800; }
+  #tunnel-arrival-dest { font-size: 17px; opacity: 0.7; }
+  #tunnel-arrival-stats { margin-top: 8px; display: flex; gap: 20px; justify-content: center; }
+  .arrival-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .arrival-stat-value { font-size: 20px; font-weight: 700; }
+  .arrival-stat-label { font-size: 11px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.06em; }
+  #tunnel-arrival-close {
+    margin-top: 12px; border: 1px solid rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.15); color: #fff; font-size: 15px; font-weight: 700;
+    padding: 14px 32px; border-radius: 14px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
+
 
 <div id="map"></div>
 
@@ -768,6 +909,39 @@
   <div id="dig-fake-env">
     <div id="dig-fake-env-text">🚧 Digging simulation coming soon</div>
     <button id="dig-fake-env-back">BACK</button>
+  </div>
+</div>
+
+<!-- Tunnel layer simulation screen -->
+<div id="tunnel-view">
+  <div id="tunnel-bg"><div id="tunnel-particles"></div></div>
+  <div id="tunnel-top-bar">
+    <button id="tunnel-close-btn">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+    </button>
+    <div id="tunnel-layer-badge">🪨 Crust</div>
+    <div style="width:40px"></div>
+  </div>
+  <div id="tunnel-center">
+    <div id="tunnel-depth-label">Depth below surface</div>
+    <div id="tunnel-depth-km">0<span id="tunnel-depth-unit"> km</span></div>
+    <div id="tunnel-radius-readout">6,371 km from Earth's centre</div>
+  </div>
+  <div id="tunnel-bottom-card">
+    <div id="tunnel-temp-header">
+      <span>🌡 Temperature</span>
+      <span id="tunnel-temp-value">15°C</span>
+    </div>
+    <div id="tunnel-temp-bar-track"><div id="tunnel-temp-bar-fill"></div></div>
+    <div id="tunnel-next-info">Next: <strong id="tunnel-next-name">—</strong> — <span id="tunnel-next-dist">—</span></div>
+    <button id="tunnel-continue-btn">Continue digging →</button>
+  </div>
+  <div id="tunnel-arrival">
+    <div id="tunnel-arrival-globe">🌏</div>
+    <div id="tunnel-arrival-title">You made it!</div>
+    <div id="tunnel-arrival-dest"></div>
+    <div id="tunnel-arrival-stats"></div>
+    <button id="tunnel-arrival-close">Back to map</button>
   </div>
 </div>
 
@@ -1989,12 +2163,227 @@
   document.getElementById('start-dig-btn').addEventListener('click', openGlobeView);
   document.getElementById('globe-dig-btn').addEventListener('click', () => {
     closeGlobeView();
-    openDigView();
+    openTunnelSimulation(origin, destination);
   });
   document.getElementById('dig-close-btn').addEventListener('click', closeDigView);
   digPermissionBtn.addEventListener('click', startDigOrientation);
   digProceedBtn.addEventListener('click', () => digFakeEnvEl.classList.add('show'));
   document.getElementById('dig-fake-env-back').addEventListener('click', () => digFakeEnvEl.classList.remove('show'));
+
+  /* =========================================================
+     Tunnel Layer Simulation
+     ========================================================= */
+  const TUNNEL_LAYERS_DEF = [
+    { name: 'Crust',       emoji: '🪨', bg: 'linear-gradient(180deg,#3a5a2a 0%,#2d4a22 35%,#7a5c1a 70%,#5a3e10 100%)', particle: '#b8a070' },
+    { name: 'Mantle',      emoji: '🔥', bg: 'linear-gradient(180deg,#8b3a00 0%,#cc5500 35%,#ff8c00 70%,#c44a00 100%)', particle: '#ff8844' },
+    { name: 'Outer core',  emoji: '🌊', bg: 'linear-gradient(180deg,#8b0000 0%,#cc0000 35%,#ff2200 70%,#990000 100%)', particle: '#ff6644' },
+    { name: 'Inner core',  emoji: '⚡', bg: 'linear-gradient(180deg,#997700 0%,#ccaa00 35%,#ffdd00 70%,#ff9900 100%)', particle: '#ffee66' },
+  ];
+
+  // Temperature from radius (km from centre)
+  const TEMP_RADII = [6371, 6336, 3481, 1221, 0];
+  const TEMP_DEGS  = [15,   300,  3700, 5000, 5200];
+  function tempFromRadius(r) {
+    for (let i = 0; i < TEMP_RADII.length - 1; i++) {
+      const r0 = TEMP_RADII[i], r1 = TEMP_RADII[i + 1];
+      if (r <= r0 && r >= r1) {
+        const frac = (r0 - r) / (r0 - r1);
+        return Math.round(TEMP_DEGS[i] + frac * (TEMP_DEGS[i + 1] - TEMP_DEGS[i]));
+      }
+    }
+    return 5200;
+  }
+  // Max temp for bar scale (5200°C)
+  const TEMP_MAX = 5200;
+
+  // Depth → radius using chord geometry (both endpoints on surface of radius R)
+  function radiusAtDepth(sKm) {
+    const R = EARTH_RADIUS_KM;
+    const L = tunnelState.chordLength;
+    return Math.sqrt(Math.max(0, R * R + sKm * (sKm - L)));
+  }
+
+  const tunnelViewEl   = document.getElementById('tunnel-view');
+  const tunnelBgEl     = document.getElementById('tunnel-bg');
+  const tunnelBadgeEl  = document.getElementById('tunnel-layer-badge');
+  const tunnelDepthEl  = document.getElementById('tunnel-depth-km');
+  const tunnelRadiusEl = document.getElementById('tunnel-radius-readout');
+  const tunnelTempValEl = document.getElementById('tunnel-temp-value');
+  const tunnelTempFillEl = document.getElementById('tunnel-temp-bar-fill');
+  const tunnelNextNameEl = document.getElementById('tunnel-next-name');
+  const tunnelNextDistEl = document.getElementById('tunnel-next-dist');
+  const tunnelContinueBtn = document.getElementById('tunnel-continue-btn');
+  const tunnelArrivalEl  = document.getElementById('tunnel-arrival');
+  const tunnelParticlesEl = document.getElementById('tunnel-particles');
+
+  const tunnelState = {
+    crossings: [],     // from computeLayerCrossings
+    chordLength: 0,
+    currentLayerIdx: 0,
+    currentDepth: 0,   // km along chord
+    targetDepth: 0,    // km — depth we're animating toward
+    animFrame: null,
+    particles: [],
+  };
+
+  function openTunnelSimulation(a, b) {
+    if (!a || !b) return;
+    const result = computeLayerCrossings(a, b);
+    tunnelState.crossings = result.crossings;
+    tunnelState.chordLength = result.chordLength !== undefined
+      ? result.chordLength
+      : haversineKm(a, b) * 2 * Math.sin(Math.asin(haversineKm(a, b) / 2 / EARTH_RADIUS_KM)); // fallback
+
+    // Compute chord length from the two 3D positions
+    const p0 = latLngToVec3(a.lat, a.lng, EARTH_RADIUS_KM);
+    const p1 = latLngToVec3(b.lat, b.lng, EARTH_RADIUS_KM);
+    tunnelState.chordLength = p0.distanceTo(p1);
+
+    tunnelState.currentDepth = 0;
+    tunnelState.currentLayerIdx = 0;
+
+    tunnelArrivalEl.classList.remove('show');
+    tunnelViewEl.classList.add('show');
+
+    buildParticles();
+    advanceToLayer(0);
+    animateTunnelDepth();
+  }
+
+  function closeTunnelSimulation() {
+    tunnelViewEl.classList.remove('show');
+    if (tunnelState.animFrame) { cancelAnimationFrame(tunnelState.animFrame); tunnelState.animFrame = null; }
+  }
+
+  function buildParticles() {
+    tunnelParticlesEl.innerHTML = '';
+    tunnelState.particles = [];
+    for (let i = 0; i < 30; i++) {
+      const p = document.createElement('div');
+      p.className = 'tunnel-particle';
+      const size = 3 + Math.random() * 7;
+      p.style.width = size + 'px';
+      p.style.height = size + 'px';
+      p.style.left = Math.random() * 100 + '%';
+      p.style.animationDuration = (2 + Math.random() * 4) + 's';
+      p.style.animationDelay = (-Math.random() * 6) + 's';
+      tunnelParticlesEl.appendChild(p);
+      tunnelState.particles.push(p);
+    }
+  }
+
+  function setParticleColor(color) {
+    tunnelState.particles.forEach(p => { p.style.background = color; });
+  }
+
+  function advanceToLayer(idx) {
+    const crossings = tunnelState.crossings;
+    if (idx >= crossings.length) { showArrival(); return; }
+
+    tunnelState.currentLayerIdx = idx;
+    const crossing = crossings[idx];
+
+    // Match crossing name to TUNNEL_LAYERS_DEF
+    const layerDef = TUNNEL_LAYERS_DEF.find(
+      l => l.name.toLowerCase() === crossing.name.toLowerCase()
+    ) || TUNNEL_LAYERS_DEF[0];
+
+    tunnelBgEl.style.background = layerDef.bg;
+    tunnelBadgeEl.textContent = layerDef.emoji + ' ' + crossing.name;
+    setParticleColor(layerDef.particle);
+
+    // Next crossing info
+    const next = crossings[idx + 1];
+    if (next) {
+      tunnelNextNameEl.textContent = next.name;
+      const distToNext = next.enterAt - (crossing.enterAt || 0);
+      tunnelNextDistEl.textContent = formatDistance(distToNext) + ' away';
+      tunnelContinueBtn.style.display = '';
+    } else {
+      // Last layer — continue goes to arrival
+      tunnelNextNameEl.textContent = 'the surface';
+      tunnelNextDistEl.textContent = 'Keep going!';
+      tunnelContinueBtn.textContent = 'Emerge on the other side →';
+      tunnelContinueBtn.style.display = '';
+    }
+
+    // Set depth animation target: go to the START of the next layer (or chord end)
+    const nextBoundary = next ? next.enterAt : tunnelState.chordLength;
+    tunnelState.targetDepth = nextBoundary;
+  }
+
+  let tunnelLastTs = null;
+  const TUNNEL_SPEED_KM_S = 80; // km per real second (simulated dig speed)
+
+  function animateTunnelDepth(ts) {
+    tunnelState.animFrame = requestAnimationFrame(animateTunnelDepth);
+    if (!tunnelLastTs) { tunnelLastTs = ts || performance.now(); return; }
+    const dt = Math.min(((ts || performance.now()) - tunnelLastTs) / 1000, 0.1);
+    tunnelLastTs = ts || performance.now();
+
+    const target = tunnelState.targetDepth;
+    if (tunnelState.currentDepth < target) {
+      tunnelState.currentDepth = Math.min(tunnelState.currentDepth + TUNNEL_SPEED_KM_S * dt, target);
+    }
+
+    const depthKm = tunnelState.currentDepth;
+    const radiusKm = radiusAtDepth(depthKm);
+    const temp = tempFromRadius(radiusKm);
+
+    // Update readouts
+    tunnelDepthEl.innerHTML = Math.round(depthKm).toLocaleString() + '<span id="tunnel-depth-unit"> km</span>';
+    tunnelRadiusEl.textContent = Math.round(radiusKm).toLocaleString() + ' km from Earth\'s centre';
+    tunnelTempValEl.textContent = temp.toLocaleString() + '°C';
+    tunnelTempFillEl.style.width = Math.min(100, (temp / TEMP_MAX) * 100) + '%';
+
+    // Auto-advance when reaching target (end of current layer)
+    const crossings = tunnelState.crossings;
+    const idx = tunnelState.currentLayerIdx;
+    const next = crossings[idx + 1];
+    const boundary = next ? next.enterAt : tunnelState.chordLength;
+    if (tunnelState.currentDepth >= boundary - 0.5) {
+      if (tunnelState.currentDepth >= tunnelState.chordLength - 0.5 && !next) {
+        // Reached the end
+        cancelAnimationFrame(tunnelState.animFrame);
+        tunnelState.animFrame = null;
+        showArrival();
+      }
+    }
+  }
+
+  function showArrival() {
+    if (tunnelState.animFrame) { cancelAnimationFrame(tunnelState.animFrame); tunnelState.animFrame = null; }
+    tunnelLastTs = null;
+    const R = EARTH_RADIUS_KM;
+    const chordKm = Math.round(tunnelState.chordLength);
+    const deepest = Math.round(R - radiusAtDepth(tunnelState.chordLength / 2));
+    const maxTemp = tempFromRadius(radiusAtDepth(tunnelState.chordLength / 2));
+    document.getElementById('tunnel-arrival-dest').textContent = destination ? destination.name : '';
+    document.getElementById('tunnel-arrival-stats').innerHTML = `
+      <div class="arrival-stat"><span class="arrival-stat-value">${chordKm.toLocaleString()} km</span><span class="arrival-stat-label">Tunnel length</span></div>
+      <div class="arrival-stat"><span class="arrival-stat-value">${deepest.toLocaleString()} km</span><span class="arrival-stat-label">Deepest point</span></div>
+      <div class="arrival-stat"><span class="arrival-stat-value">${maxTemp.toLocaleString()}°C</span><span class="arrival-stat-label">Peak temp</span></div>
+    `;
+    tunnelArrivalEl.classList.add('show');
+  }
+
+  tunnelContinueBtn.addEventListener('click', () => {
+    const crossings = tunnelState.crossings;
+    const idx = tunnelState.currentLayerIdx;
+    const next = crossings[idx + 1];
+    if (next) {
+      // Fast-forward depth to next layer boundary and transition
+      tunnelState.currentDepth = next.enterAt;
+      advanceToLayer(idx + 1);
+    } else {
+      // Fast-forward to end
+      tunnelState.currentDepth = tunnelState.chordLength;
+      showArrival();
+    }
+  });
+
+  document.getElementById('tunnel-close-btn').addEventListener('click', closeTunnelSimulation);
+  document.getElementById('tunnel-arrival-close').addEventListener('click', closeTunnelSimulation);
 </script>
 
 </body>
