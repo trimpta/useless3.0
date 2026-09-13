@@ -1533,7 +1533,7 @@
     suggestionsEl.classList.add('show');
   }
 
-  suggestionsEl.addEventListener('click', (e) => {
+  suggestionsEl.addEventListener('pointerdown', (e) => {
     const removeBtn = e.target.closest('.remove-history');
     if (removeBtn) {
       removeFromHistory(parseFloat(removeBtn.dataset.removeLat), parseFloat(removeBtn.dataset.removeLng));
@@ -1763,8 +1763,9 @@
       });
       const capMesh = new THREE.Mesh(new THREE.CircleGeometry(1, 64), capMat);
       capMesh.userData.isCap = true;
-      capMesh.userData.layerRadius = r; // stored for radius computation in drawGlobeRoute
-      capMesh.visible = false;          // hidden until drawGlobeRoute sizes it
+      capMesh.userData.layerRadius = r;
+      capMesh.userData.layerIndex = i; // 0=crust, 1=mantle, 2=outer core, 3=inner core
+      capMesh.visible = false;
       globeGroup.add(capMesh);
     });
 
@@ -1837,13 +1838,13 @@
     globeGroup.rotateY(-0.38);
 
     // ----------------------------------------------------------------
-    // Update clipping plane: keep local z ≥ d (the near hemisphere)
+    // Update clipping plane: keep local z <= d (the larger hemisphere)
     // THREE.Plane clips fragments where dot(p, n) + constant < 0
-    // We want: z - d ≥ 0  →  n=(0,0,1), constant = -d
+    // We want: z - d > 0 to be CLIPPED => -z + d < 0 => n=(0,0,-1), constant=d
     // ----------------------------------------------------------------
     globeCutDistance = d;
     globeGroup.updateMatrixWorld();
-    const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -d);
+    const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), d);
     globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
 
     // ----------------------------------------------------------------
@@ -1860,7 +1861,9 @@
         child.visible = false; // plane misses this layer entirely
       } else {
         const r = Math.sqrt(disc);
-        child.position.set(0, 0, d);
+        // Offset inner layers slightly in +Z to prevent z-fighting and ensure they render on top
+        const zOffset = d + child.userData.layerIndex * 0.001;
+        child.position.set(0, 0, zOffset);
         child.scale.set(r, r, 1);     // scale the unit circle to the correct radius
         child.quaternion.identity();   // stays flat in the local XY plane (facing +Z)
         child.visible = true;
@@ -1918,7 +1921,7 @@
       globeVelocity.x *= 0.92;
       
       globeGroup.updateMatrixWorld();
-      const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -globeCutDistance);
+      const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), globeCutDistance);
       globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
     }
     if (globeComposer) {
@@ -2007,7 +2010,7 @@
     globeGroup.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), globeVelocity.x);
     
     globeGroup.updateMatrixWorld();
-    const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -globeCutDistance);
+    const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), globeCutDistance);
     globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
   });
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
