@@ -356,8 +356,10 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    background: #151b24;
-    border-top: 1px solid rgba(255,255,255,0.08);
+    background: rgba(21, 27, 36, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid rgba(255,255,255,0.15);
     padding: 16px 18px calc(18px + env(safe-area-inset-bottom));
   }
 
@@ -784,11 +786,19 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<!-- pinned to the last release shipping a clean UMD build (global THREE);
-     r160+ removed it in favour of ES modules, which would mean an import
-     map / module script for no real gain here -->
-<script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
-<script>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.149.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.149.0/examples/jsm/"
+    }
+  }
+</script>
+<script type="module">
+  import * as THREE from 'three';
+  import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
   /* =========================================================
      Search + reverse geocoding now hit the free OSM Nominatim
      API at runtime (no key). Usage policy: max ~1 req/sec, so
@@ -1520,10 +1530,11 @@
   const globeViewEl = document.getElementById('globe-view');
   const globeCanvasEl = document.getElementById('globe-canvas');
   let globeScene = null, globeCamera = null, globeRenderer = null, globeGroup = null;
+  let globeComposer = null, globeClippingPlane = null;
   let globeRouteObjects = [];
   let globeAnimating = false;
   let globeDragging = false;
-  let globeAutoSpin = true;
+  let globeAutoSpin = false;
 
   function initGlobeScene() {
     if (globeRenderer) return;
@@ -1532,46 +1543,56 @@
     globeCamera.position.set(0, 0, 3.1);
     globeRenderer = new THREE.WebGLRenderer({ canvas: globeCanvasEl, antialias: true, alpha: true });
     globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    globeRenderer.localClippingEnabled = true;
+
+    // Post-processing for high-end glowing effects
+    const renderScene = new RenderPass(globeScene, globeCamera);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.0, 0.5, 0.4);
+    globeComposer = new EffectComposer(globeRenderer);
+    globeComposer.addPass(renderScene);
+    globeComposer.addPass(bloomPass);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    globeScene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(5, 3, 5);
+    globeScene.add(dirLight);
+    const coreLight = new THREE.PointLight(0xffe08a, 2.0, 10);
+    coreLight.position.set(0, 0, 0);
+    globeScene.add(coreLight);
 
     globeGroup = new THREE.Group();
     globeScene.add(globeGroup);
-
-    // 80% of natural radius — gives breathing room inside the canvas
-    // for the CSS aura gradient to frame the sphere cleanly
     globeGroup.scale.setScalar(0.8);
 
-    // load the earth-dark basemap (country outlines only, no labels) for the
-    // outer crust shell; inner layers stay as flat-coloured translucent shells
-    const texLoader = new THREE.TextureLoader();
-    const earthTex = texLoader.load(
-      'https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-dark.jpg'
-    );
+    // Create the global clipping plane for the slice
+    globeClippingPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 
-    // nested translucent shells, outermost first, so you can see into the
-    // core through the crust/mantle
-    const innerOpacities = [0.22, 0.42, 0.95]; // mantle / outer core / inner core
+    const texLoader = new THREE.TextureLoader();
+    const earthTex = texLoader.load('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-dark.jpg');
+
+    const innerColors = [0xd9773a, 0xf0a43a, 0xffe08a];
+    const innerEmissive = [0x552200, 0xaa4400, 0xffaa00];
+
     EARTH_LAYERS.forEach((layer, i) => {
       const r = layer.outerRadius / EARTH_RADIUS_KM;
       const mat = i === 0
-        ? new THREE.MeshBasicMaterial({
-            map: earthTex,
-            transparent: true,
-            opacity: 0.65,       // enough for map to read; enough transparency to see inner shells
-            depthWrite: false,
-            side: THREE.DoubleSide
+        ? new THREE.MeshStandardMaterial({
+            map: earthTex, roughness: 0.8, side: THREE.DoubleSide,
+            clippingPlanes: [globeClippingPlane]
           })
-        : new THREE.MeshBasicMaterial({
-            color: layer.color, transparent: true,
-            opacity: innerOpacities[i - 1],
-            depthWrite: false, side: THREE.DoubleSide
+        : new THREE.MeshStandardMaterial({
+            color: innerColors[i - 1],
+            emissive: innerEmissive[i - 1], emissiveIntensity: 0.8,
+            roughness: 0.9, side: THREE.DoubleSide,
+            clippingPlanes: [globeClippingPlane]
           });
       globeGroup.add(new THREE.Mesh(new THREE.SphereGeometry(r, 48, 32), mat));
     });
 
-    // subtle wireframe grid — kept at very low opacity so texture reads first
     globeGroup.add(new THREE.Mesh(
       new THREE.SphereGeometry(1.001, 24, 16),
-      new THREE.MeshBasicMaterial({ color: 0x8ab4f8, wireframe: true, transparent: true, opacity: 0.08, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: 0x8ab4f8, wireframe: true, transparent: true, opacity: 0.08, depthWrite: false, clippingPlanes: [globeClippingPlane] })
     ));
   }
 
@@ -1589,35 +1610,48 @@
     const p0 = latLngToVec3(a.lat, a.lng, 1);
     const p1 = latLngToVec3(b.lat, b.lng, 1);
 
+    // Update clipping plane to slice through A and B
+    let normal = new THREE.Vector3().crossVectors(p0, p1);
+    if (normal.lengthSq() < 1e-6) {
+      normal.set(p0.y, -p0.x, 0).normalize();
+    } else {
+      normal.normalize();
+    }
+    globeClippingPlane.normal.copy(normal);
+
+    // Rings instead of solid dots for entry/exit
     [[p0, 0x4285F4], [p1, 0xEA4335]].forEach(([pos, color]) => {
-      const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(0.035, 16, 12),
-        new THREE.MeshBasicMaterial({ color })
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.02, 0.04, 32),
+        new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, depthTest: false })
       );
-      dot.position.copy(pos);
-      globeGroup.add(dot);
-      globeRouteObjects.push(dot);
+      ring.position.copy(pos).multiplyScalar(1.002);
+      ring.lookAt(new THREE.Vector3(0, 0, 0));
+      globeGroup.add(ring);
+      globeRouteObjects.push(ring);
     });
 
-    // a thin cylinder rather than THREE.Line — line widths above 1px are
-    // ignored by most browsers, and this chord needs to read clearly
     const chord = new THREE.Vector3().subVectors(p1, p0);
+    // Option B: Hollow Tube - rendered with BackSide so it looks like a hole
+    const tubeMat = new THREE.MeshStandardMaterial({
+      color: 0xff4400, emissive: 0xff4400, emissiveIntensity: 1.5,
+      side: THREE.BackSide, clippingPlanes: [globeClippingPlane]
+    });
     const tube = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.012, 0.012, chord.length(), 12),
-      new THREE.MeshBasicMaterial({ color: 0xffffff })
+      new THREE.CylinderGeometry(0.015, 0.015, chord.length(), 16),
+      tubeMat
     );
     tube.position.copy(new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5));
     tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), chord.clone().normalize());
     globeGroup.add(tube);
     globeRouteObjects.push(tube);
 
-    // face the camera at the midpoint of the route to start with
-    const mid = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
-    if (mid.lengthSq() > 1e-6) {
-      const m = mid.clone().normalize();
-      globeGroup.rotation.y = -Math.atan2(m.z, m.x);
-      globeGroup.rotation.x = Math.asin(Math.max(-1, Math.min(1, m.y))) * 0.6;
-    }
+    // Face the slice cut towards the camera (the normal points towards the camera)
+    const targetQuat = new THREE.Quaternion().setFromUnitVectors(normal, new THREE.Vector3(0, 0, 1));
+    globeGroup.quaternion.copy(targetQuat);
+    // Tilt it slightly so we can see into the slice
+    globeGroup.rotateX(0.3);
+    globeGroup.rotateY(-0.3);
   }
 
   function resizeGlobeRenderer() {
@@ -1625,6 +1659,7 @@
     const w = globeCanvasEl.clientWidth, h = globeCanvasEl.clientHeight;
     if (!w || !h) return;
     globeRenderer.setSize(w, h, false);
+    if (globeComposer) globeComposer.setSize(w, h);
     globeCamera.aspect = w / h;
     globeCamera.updateProjectionMatrix();
   }
@@ -1632,7 +1667,19 @@
   function globeRenderLoop() {
     if (!globeAnimating) return;
     if (globeAutoSpin && !globeDragging) globeGroup.rotation.y += 0.0015;
-    globeRenderer.render(globeScene, globeCamera);
+    
+    if (!globeDragging && typeof globeVelocity !== 'undefined' && (Math.abs(globeVelocity.x) > 0.0001 || Math.abs(globeVelocity.y) > 0.0001)) {
+      globeGroup.rotation.y += globeVelocity.x;
+      globeGroup.rotation.x = Math.max(-1.45, Math.min(1.45, globeGroup.rotation.x + globeVelocity.y));
+      globeVelocity.x *= 0.92;
+      globeVelocity.y *= 0.92;
+    }
+
+    if (globeComposer) {
+      globeComposer.render();
+    } else {
+      globeRenderer.render(globeScene, globeCamera);
+    }
     requestAnimationFrame(globeRenderLoop);
   }
 
@@ -1705,11 +1752,13 @@
     globeAnimating = false;
   }
 
-  // drag to spin (rotation only — no zoom)
+  // drag to spin with inertia
   let globeDragLast = null;
+  let globeVelocity = { x: 0, y: 0 };
   globeCanvasEl.addEventListener('pointerdown', (e) => {
     globeDragging = true;
     globeDragLast = { x: e.clientX, y: e.clientY };
+    globeVelocity = { x: 0, y: 0 };
     try { globeCanvasEl.setPointerCapture(e.pointerId); } catch (err) { /* no active pointer to capture */ }
   });
   globeCanvasEl.addEventListener('pointermove', (e) => {
@@ -1717,8 +1766,10 @@
     const dx = e.clientX - globeDragLast.x;
     const dy = e.clientY - globeDragLast.y;
     globeDragLast = { x: e.clientX, y: e.clientY };
-    globeGroup.rotation.y += dx * 0.006;
-    globeGroup.rotation.x = Math.max(-1.45, Math.min(1.45, globeGroup.rotation.x + dy * 0.006));
+    globeVelocity.x = dx * 0.006;
+    globeVelocity.y = dy * 0.006;
+    globeGroup.rotation.y += globeVelocity.x;
+    globeGroup.rotation.x = Math.max(-1.45, Math.min(1.45, globeGroup.rotation.x + globeVelocity.y));
   });
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
     globeCanvasEl.addEventListener(evt, () => {
