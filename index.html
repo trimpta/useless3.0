@@ -279,8 +279,8 @@
   }
   #bottom-card.expanded #pitch-content { opacity: 1; }
   .pitch-tagline { font-size: 15px; font-weight: 600; color: #222; line-height: 1.4; margin: 4px 0 12px; }
+  .pitch-heading { font-size: 13.5px; font-weight: 700; color: #222; margin: 0 0 4px; }
   .pitch-para { font-size: 13.5px; line-height: 1.55; color: #555; margin: 0 0 12px; }
-  .pitch-para strong { color: #222; }
   #explore-title {
     font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
     color: #888; margin: 12px 0 8px;
@@ -796,6 +796,13 @@
   #tunnel-bg {
     position: absolute;
     inset: 0;
+    /* matches the Crust color in TUNNEL_LAYERS_DEF — every dig starts here,
+       so this is what should already be showing before JS paints the real,
+       depth-driven color on the next frame. Without an opaque default here,
+       the div starts fully transparent and the 0.8s transition animates
+       from transparent to opaque on open, letting the map and the route
+       card underneath show through for most of that window. */
+    background: #3f5c34;
     transition: background 0.8s ease;
     overflow: hidden;
   }
@@ -1075,8 +1082,10 @@
   </div>
   <div id="pitch-content">
     <p class="pitch-tagline">Ever gotten tired of Google Maps refusing to tell you how to get to the other side of the world? Mine your way fixes that.</p>
-    <p class="pitch-para"><strong>The problem (that doesn't exist):</strong> Set your destination far enough away — say, straight through to the other side of the planet — and Google Maps gives up. And when it does find a route, it insists on the road route: turns, terrain, oceans, when all you wanted was the straight line.</p>
-    <p class="pitch-para"><strong>The solution (that nobody asked for):</strong> The most straightforward path there is — a straight line from A to B — and we actually help you get there. Dig angle, a compass to aim your pickaxe, a 3D route preview through Earth's layers, and heads-up alerts, like bringing heat protection before you hit the core.</p>
+    <h4 class="pitch-heading">The problem (that doesn't exist)</h4>
+    <p class="pitch-para">Set your destination far enough away — say, straight through to the other side of the planet — and Google Maps gives up. And when it does find a route, it insists on the road route: turns, terrain, oceans, when all you wanted was the straight line.</p>
+    <h4 class="pitch-heading">The solution (that nobody asked for)</h4>
+    <p class="pitch-para">The most straightforward path there is — a straight line from A to B — and we actually help you get there. Dig angle, a compass to aim your pickaxe, a 3D route preview through Earth's layers, and heads-up alerts, like bringing heat protection before you hit the core.</p>
     <div id="explore-section">
       <div id="explore-title">Try somewhere far away</div>
       <div id="explore-list">
@@ -2285,10 +2294,18 @@
       globeCutFaceGroup.quaternion.setFromUnitVectors(zAxis, worldNormal);
     }
 
-    // Auto-spin the globe around the Y axis so the cut face is pointing generally towards the camera (+Z)
-    const angleToCamera = Math.atan2(worldNormal.x, worldNormal.z);
+    // Auto-spin the globe around the Y axis so the cut face is pointing generally towards the camera (+Z).
+    // Three.js's rotationY matrix maps (x,z) -> (x*cosθ + z*sinθ, -x*sinθ + z*cosθ); solving for the θ
+    // that sends worldNormal's (x,z) to (0, 1) gives atan2(-x, z), not atan2(x, z) — the previous sign
+    // sent the INTACT shell toward the camera instead of the cut face for most destination pairs (only
+    // ever looking right by coincidence, e.g. when worldNormal.x was already ~0).
+    const angleToCamera = Math.atan2(-worldNormal.x, worldNormal.z);
     globeGroup.rotation.set(0, angleToCamera, 0);
     globeCumulativePitch = 0;
+    // a small default tilt instead of a dead-flat, straight-on cut face —
+    // reads more like a solid 3D object from the first frame, before the
+    // user ever drags
+    globeCumulativePitch = applyGlobePitch(GLOBE_DEFAULT_PITCH);
     globeGroup.updateMatrixWorld();
 
     // ----------------------------------------------------------------
@@ -2591,6 +2608,7 @@
         globeShown: globeViewEl.classList.contains('show'),
         rotationY: globeGroup ? globeGroup.rotation.y : null,
         cutDistance: globeCutDistance,
+        cutNormal: { x: globeCutNormal.x, y: globeCutNormal.y, z: globeCutNormal.z },
         velocityX: globeVelocity.x,
         dragging: globeDragging
       };
@@ -2625,7 +2643,10 @@
   let globeDragLast = null;
   let globeVelocity = { x: 0, y: 0 };
   let globeCumulativePitch = 0;
-  const GLOBE_PITCH_LIMIT = 1.3; // radians (~74.5deg) either side of level
+  const GLOBE_PITCH_LIMIT = 1.05; // radians (~60deg) either side of level — steeper than
+                                   // this and the poles swing across the screen in a way
+                                   // that reads as the globe "flipping" rather than tilting
+  const GLOBE_DEFAULT_PITCH = 0.18; // radians (~10deg) — the resting tilt on open
   // time-smoothed px/ms speed, independent of per-move rotation step —
   // using only the last pointermove's delta (as before) meant a fast
   // flick that naturally decelerates right before lift-off left almost
@@ -3125,21 +3146,13 @@
 
     // the live preview is the same rotatable 3D globe as the page
     // before this one, shrunk into a panel rather than replaced —
-    // opened already rotated to face the cut section (rather than the
-    // textured near side) so the layers are visible immediately without
-    // having to spin it first
+    // drawGlobeRoute() already orients it so the cut section faces the
+    // camera, so no extra spin is needed here (an extra +=Math.PI used
+    // to be applied to compensate for that auto-orientation facing the
+    // wrong way — now that the root cause is fixed, adding it back would
+    // flip the view to the textured far side instead)
     globeViewEl.classList.add('pip-mode');
     openGlobeView();
-    globeGroup.rotation.y += Math.PI;
-    globeGroup.updateMatrixWorld();
-    // the clipping plane is baked into world space from the group's
-    // matrixWorld at the moment it's computed (see drawGlobeRoute) — the
-    // rotation above moves the mesh but the plane doesn't follow unless
-    // recomputed here too, which left the "cut" not lining up with what's
-    // actually facing the camera (looked like the full textured globe,
-    // section nowhere in view)
-    const localPlane = new THREE.Plane(globeCutNormal.clone().negate(), globeCutDistance);
-    globeClippingPlane.copy(localPlane).applyMatrix4(globeGroup.matrixWorld);
     if (tunnelLiveDot) tunnelLiveDot.visible = true;
 
     buildParticles();

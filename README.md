@@ -49,28 +49,15 @@ Then open `http://localhost:8080` in your browser. (A static server is required,
 ### Project Documentation
 For Software:
 
-# Screenshots (Add at least 3)
-![Screenshot1](Add screenshot 1 here with proper name)
-*Add caption explaining what this shows*
-
-![Screenshot2](Add screenshot 2 here with proper name)
-*Add caption explaining what this shows*
-
-![Screenshot3](Add screenshot 3 here with proper name)
-*Add caption explaining what this shows*
-
-# Diagrams
-![Workflow](Add your workflow/architecture diagram here)
-*Add caption explaining your workflow*
-
+# Screenshots
+![Tunnel cross-section preview](screenshot1.jpeg)
+*The 3D globe preview after picking a far-away destination — sliced open to show the straight-line tunnel through Earth's layers, with the dig stats (distance, deepest point, temperature) below.*
 
 ### Project Demo
 # Video
-[Add your demo video link here]
-*Explain what the video demonstrates*
+https://github.com/trimpta/useless3.0/raw/main/screencap.mp4
 
-# Additional Demos
-[Add any extra demo materials/links]
+*Full walkthrough: searching for a destination, the globe cross-section preview, the AR compass dig view, and the layer-by-layer tunnel simulation down to the core.*
 
 ## Team Contributions
 - [Shreevardhan T V](https://github.com/trimpta) & [Bhama SS](https://github.com/bhama2006/): Idea and implementation, built together end-to-end.
